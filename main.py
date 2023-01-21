@@ -79,8 +79,23 @@ def getNetwork(args):
     elif (args.net_type == 'wide-resnet'):
         net = Wide_ResNet(args.depth, args.widen_factor, args.dropout, num_classes)
         file_name = 'wide-resnet-'+str(args.depth)+'x'+str(args.widen_factor)
+        
+    elif (args.net_type == 'wide-resnet-pruned'):
+        net = Wide_ResNetPruned(args.depth, args.widen_factor, args.dropout, num_classes)
+        file_name = 'wide-resnet-pruned-'+str(args.depth)+'x'+str(args.widen_factor)
+    elif (args.net_type == 'wide-resnet-pruned-global'):
+        net = Wide_ResNetPrunedGlobal(args.depth, args.widen_factor, args.dropout, num_classes)
+        file_name = 'wide-resnet-pruned-global'+str(args.depth)+'x'+str(args.widen_factor)
+        
+    elif (args.net_type == 'wide-resnet-l1-pruned'):
+        net = Wide_ResNetL1Pruned(args.depth, args.widen_factor, args.dropout, num_classes)
+        file_name = 'wide-resnet-l1-pruned-'+str(args.depth)+'x'+str(args.widen_factor)
+    elif (args.net_type == 'wide-resnet-pruned-global'):
+        net = Wide_ResNetPrunedGlobal(args.depth, args.widen_factor, args.dropout, num_classes)
+        file_name = 'wide-resnet-pruned-global'+str(args.depth)+'x'+str(args.widen_factor)
+    
     else:
-        print('Error : Network should be either [LeNet / VGGNet / ResNet / Wide_ResNet')
+        print('Error : Network should be either [LeNet / VGGNet / ResNet / Wide_ResNet [pruned] / Wide_ResNet L1 [pruned]')
         sys.exit(0)
 
     return net, file_name
