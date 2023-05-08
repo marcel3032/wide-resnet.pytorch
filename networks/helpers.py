@@ -1,5 +1,5 @@
 import numpy as np
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 
 def plot_hist(data, plot_zeros=True):
@@ -13,3 +13,4 @@ def plot_hist(data, plot_zeros=True):
         print(c, b)
     plt.hist(b[:-1], b, weights=c)
     plt.draw()
+
