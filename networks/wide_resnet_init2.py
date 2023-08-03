@@ -29,9 +29,14 @@ def weights_init(m):
         if type(m) == nn.Linear:
             h = m.weight.shape[0]
             w = m.weight.shape[1]
-            m.weight = nn.Parameter(torch.Tensor(
-                np.random.randn(h, K).dot(np.random.randn(K, w)) + np.random.randn(h, w) * (
-                            np.random.rand(h, w) > 0.8).astype(int)))
+            weights = np.random.randn(h, K).dot(np.random.randn(K, w)) + np.random.randn(h, w) * (np.random.rand(h, w) > 0.8).astype(int)
+            print(np.mean(weights), np.std(weights))
+            weights -= np.mean(weights)
+            weights /= np.std(weights)
+            print(np.mean(weights), np.std(weights))
+            m.weight = nn.Parameter(torch.Tensor(weights))
+                # np.random.randn(h, K).dot(np.random.randn(K, w)) + np.random.randn(h, w) * (np.random.rand(h, w) > 0.8).astype(int)))
+                # np.random.randn(h, w) * (np.random.rand(h, w) > 0.8).astype(int)))
             # m.bias = nn.Parameter(torch.Tensor(np.random.randn(m.bias.shape[0], k).dot(np.random.randn(k, m.bias.shape[1]))))
 
 

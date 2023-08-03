@@ -102,6 +102,10 @@ def getNetwork(args):
         net = Wide_ResNet_init2(args.depth, args.widen_factor, args.dropout, num_classes)
         file_name = 'wide-resnet-init2'+str(args.depth)+'x'+str(args.widen_factor)
 
+    elif (args.net_type == 'wide-resnet-sim'):
+        net = Wide_ResNet_sim(args.depth, args.widen_factor, args.dropout, num_classes)
+        file_name = 'wide-resnet-sim'+str(args.depth)+'x'+str(args.widen_factor)
+
     else:
         print('Error : Network should be either [LeNet / VGGNet / ResNet / Wide_ResNet [pruned] / Wide_ResNet L1 [pruned]')
         sys.exit(0)
@@ -185,6 +189,8 @@ def train(epoch):
         loss = criterion(outputs, targets)  # Loss
         loss.backward()  # Backward Propagation
         optimizer.step() # Optimizer update
+
+        net.set_w()
 
         train_loss += loss.item()
         _, predicted = torch.max(outputs.data, 1)

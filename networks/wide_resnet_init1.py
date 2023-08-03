@@ -25,13 +25,14 @@ def conv_init(m):
 def weights_init(m):
     with torch.no_grad():
         if type(m) == nn.Linear:
-            print(m.bias.shape)
             h = m.weight.shape[0]
             w = m.weight.shape[1]
-            m.weight = nn.Parameter(torch.Tensor(
-                np.random.randn(h, K).dot(np.random.randn(K, w)) + np.random.randn(h, w) * (
-                            np.random.rand(h, w) > 0.8).astype(int)))
-            # m.bias = nn.Parameter(torch.Tensor(np.random.randn(m.bias.shape[0], k).dot(np.random.randn(k, m.bias.shape[1]))))
+            weights = np.random.randn(h, K).dot(np.random.randn(K, w)) + np.random.randn(h, w) * (
+                        np.random.rand(h, w) > 0.8).astype(int)
+            weights -= np.mean(weights)
+            weights /= np.std(weights)
+            print(np.mean(weights), np.std(weights))
+            m.weight = nn.Parameter(torch.Tensor(weights))
 
 
 class wide_basic_init1(nn.Module):
@@ -86,7 +87,11 @@ class Wide_ResNet_init1(nn.Module):
 
         # plot_hist(torch.masked_select(self.linear.weight, self.linear.weight != 0).detach().numpy(), plot_zeros=True)
 
+<<<<<<< HEAD
         # self.apply(weights_init)
+=======
+        self.apply(weights_init)
+>>>>>>> ebb7480 (some updates in weight initialization, add similarity weight updates)
 
         # exit(0)
 
