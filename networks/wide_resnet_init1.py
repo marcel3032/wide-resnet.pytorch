@@ -87,11 +87,7 @@ class Wide_ResNet_init1(nn.Module):
 
         # plot_hist(torch.masked_select(self.linear.weight, self.linear.weight != 0).detach().numpy(), plot_zeros=True)
 
-<<<<<<< HEAD
-        # self.apply(weights_init)
-=======
         self.apply(weights_init)
->>>>>>> ebb7480 (some updates in weight initialization, add similarity weight updates)
 
         # exit(0)
 

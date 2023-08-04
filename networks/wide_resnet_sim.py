@@ -86,82 +86,25 @@ class Wide_ResNet_sim(nn.Module):
         out = self.conv1(x)
         unfold = F.unfold(x, kernel_size=3, padding=1, stride=1)
 
-        # print(self.conv1.weight.shape)
-        # print(self.conv1.weight[0])
-        # print(x.shape)
-        # print(x[:, :, 0, 0])
-        # print(x[:, :, 0, 0].shape)
-        # print(F.unfold(x, kernel_size=3, padding=1, stride=1).shape)
-        # print(out.shape)
-        #
-        # similarities = []
-        # for k in range(16):
-        #     for i in range(32):
-        #         for j in range(32):
-        #             res = out[:, k, i, j]  # toto je ten vysledny vec
-        #             for a in range(3):
-        #                 for b in range(3):
-        #                     for c in range(3):
-        #                         inp = unfold[:, 3 * 3 * a + 3 * b + c, 32 * i + j]
-        #                         similarities.append((res.dot(inp).item(), k, i, j, a, b, c))
-        #                         print(similarities)
-        #                         (F.unfold(x, kernel_size=3, padding=1, stride=1).transpose(1, 2).matmul(self.conv1.weight.view(self.conv1.weight.size(0), -1).t()) + self.conv1.bias).transpose(1, 2).view(1,16,32,32)
-        #             if False:
-        #                 conv = sum(unfold[:, 3 * 3 * a + 3 * b + c, 32 * i + j] * self.conv1.weight[k, a, b, c] + self.conv1.bias[k] for c in range(3) for b in range(3) for a in range(3))
-        #                 diff = (res - conv).abs().max()
-        #                 print(diff)
-        #                 if diff > 1e-5:
-        #                     raise ValueError()
-        # similarities.sort()
-        # _, k, i, j, a, b, c = similarities[0]
-        # print(similarities[0], self.conv1.weight[k, a, b, c])
-        # _, k, i, j, a, b, c = similarities[-1]
-        # print(similarities[-1], self.conv1.weight[k, a, b, c])
-
-        # torch.autograd.set_detect_anomaly(True)
-
         similarities = torch.einsum('bkd,bcd->kdc', out.reshape(128, 16, -1),
                                     unfold.reshape(128, 27, -1)).detach().numpy()
 
-        # maxpartition = get_indeces_of_k_smallest(similarities, -K)
-        # minpartition = get_indeces_of_k_smallest(similarities,  K)
-
         K = int(similarities.size * 0.05)
 
-        indices = similarities.argsort(axis=None)
+        max_similarities = torch.einsum('abc,ac->abc', torch.Tensor(similarities), torch.Tensor(
+            1 - (self.conv1.weight.reshape(16, 27).detach().numpy() != 0).astype("int"))).detach().numpy()
+        max_partition = get_indexes_of_k_smallest(max_similarities, -K)
+        a_list, b_list, c_list = np.unravel_index(max_partition, similarities.shape)
+        C_list = np.unravel_index(c_list, self.conv1.weight[0].shape)
+        self.to_randn = (a_list, *C_list)
 
-        self.to_zero = []
-        self.to_randn = []
+        min_similarities = torch.einsum('abc,ac->abc', torch.Tensor(similarities), torch.Tensor(
+            (self.conv1.weight.reshape(16, 27).detach().numpy() != 0).astype("int"))).detach().numpy()
+        min_partition = get_indexes_of_k_smallest(min_similarities, K)
+        a_list, b_list, c_list = np.unravel_index(min_partition, similarities.shape)
+        C_list = np.unravel_index(c_list, self.conv1.weight[0].shape)
+        self.to_zero = (a_list, *C_list)
 
-        for idx in np.flip(indices):
-            a, b, c = np.unravel_index(idx, similarities.shape)
-            C = np.unravel_index(c, self.conv1.weight[a].shape)
-            # print(similarities[a, b, c], self.conv1.weight[a][C])
-            if self.conv1.weight[a][C] == 0:
-                K -= 1
-                # with torch.no_grad():
-                #     self.conv1.weight[a][C] = torch.randn(1)
-                self.to_randn.append((a, C))
-            if K == 0:
-                break
-
-        # print()
-
-        K = int(similarities.size * 0.00001)
-
-        for idx in indices:
-            a, b, c = np.unravel_index(idx, similarities.shape)
-            C = np.unravel_index(c, self.conv1.weight[a].shape)
-            # print(similarities[a, b, c], self.conv1.weight[a][C])
-            if self.conv1.weight[a][C] != 0:
-                K -= 1
-                # with torch.no_grad():
-                #     self.conv1.weight[a][C] = 0
-                self.to_zero.append((a, C))
-            if K == 0:
-                break
-
-        # raise RuntimeError()
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
@@ -175,18 +118,14 @@ class Wide_ResNet_sim(nn.Module):
         return out
 
     def set_w(self):
-        for a, C in self.to_zero:
-            with torch.no_grad():
-                self.conv1.weight[a][C] = 0
-
-        for a, C in self.to_randn:
-            with torch.no_grad():
-                self.conv1.weight[a][C] = torch.randn(1)
+        with torch.no_grad():
+            self.conv1.weight[self.to_zero] = 0
+            self.conv1.weight[self.to_randn] = torch.randn(self.conv1.weight[self.to_randn].shape)
 
 
-def get_indeces_of_k_smallest(arr, k):
+def get_indexes_of_k_smallest(arr, k):
     idx = np.argpartition(arr.ravel(), k)
-    return np.array(np.unravel_index(idx, arr.shape))[:, range(min(k, 0), max(k, 0))].T
+    return idx[range(min(k, 0), max(k, 0))].T
 
 
 if __name__ == '__main__':
