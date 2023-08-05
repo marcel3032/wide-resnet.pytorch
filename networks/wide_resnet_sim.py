@@ -7,6 +7,7 @@ from torch.nn.utils import prune
 
 import sys
 import numpy as np
+from torch.utils.tensorboard import SummaryWriter
 
 
 def conv3x3(in_planes, out_planes, stride=1):
@@ -19,6 +20,7 @@ def conv_init(m):
     if classname.find('Conv') != -1:
         init.xavier_uniform_(m.weight, gain=np.sqrt(2))
         init.constant_(m.bias, 0)
+        prune.random_unstructured(m, 'weight', amount=0.8)
     elif classname.find('BatchNorm') != -1:
         init.constant_(m.weight, 1)
         init.constant_(m.bias, 0)
@@ -39,8 +41,8 @@ class wide_basic(nn.Module):
                 nn.Conv2d(in_planes, planes, kernel_size=1, stride=stride, bias=True),
             )
 
-        prune.random_unstructured(self.conv1, 'weight', amount=0.8)
-        prune.random_unstructured(self.conv2, 'weight', amount=0.8)
+        # prune.random_unstructured(self.conv1, 'weight', amount=0.8)
+        # prune.random_unstructured(self.conv2, 'weight', amount=0.8)
 
     def forward(self, x):
         out = self.dropout(self.conv1(F.relu(self.bn1(x))))
@@ -51,8 +53,10 @@ class wide_basic(nn.Module):
 
 
 class Wide_ResNet_sim(nn.Module):
-    def __init__(self, depth, widen_factor, dropout_rate, num_classes):
+    def __init__(self, writer: SummaryWriter, depth, widen_factor, dropout_rate, num_classes):
         super(Wide_ResNet_sim, self).__init__()
+        self.writer = writer
+        self.global_step = 0
         self.in_planes = 16
 
         assert ((depth - 4) % 6 == 0), 'Wide-resnet depth should be 6n+4'
@@ -69,7 +73,7 @@ class Wide_ResNet_sim(nn.Module):
         self.bn1 = nn.BatchNorm2d(nStages[3], momentum=0.9)
         self.linear = nn.Linear(nStages[3], num_classes)
 
-        prune.random_unstructured(self.conv1, 'weight', amount=0.8)
+        # prune.random_unstructured(self.conv1, 'weight', amount=0.8)
         prune.random_unstructured(self.linear, 'weight', amount=0.8)
 
     def _wide_layer(self, block, planes, num_blocks, dropout_rate, stride):
@@ -83,28 +87,10 @@ class Wide_ResNet_sim(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        batch_size = x.shape[0]
+
         out = self.conv1(x)
-        unfold = F.unfold(x, kernel_size=3, padding=1, stride=1)
-
-        similarities = torch.einsum('bkd,bcd->kdc', out.reshape(128, 16, -1),
-                                    unfold.reshape(128, 27, -1)).detach().numpy()
-
-        K = int(similarities.size * 0.05)
-
-        max_similarities = torch.einsum('abc,ac->abc', torch.Tensor(similarities), torch.Tensor(
-            1 - (self.conv1.weight.reshape(16, 27).detach().numpy() != 0).astype("int"))).detach().numpy()
-        max_partition = get_indexes_of_k_smallest(max_similarities, -K)
-        a_list, b_list, c_list = np.unravel_index(max_partition, similarities.shape)
-        C_list = np.unravel_index(c_list, self.conv1.weight[0].shape)
-        self.to_randn = (a_list, *C_list)
-
-        min_similarities = torch.einsum('abc,ac->abc', torch.Tensor(similarities), torch.Tensor(
-            (self.conv1.weight.reshape(16, 27).detach().numpy() != 0).astype("int"))).detach().numpy()
-        min_partition = get_indexes_of_k_smallest(min_similarities, K)
-        a_list, b_list, c_list = np.unravel_index(min_partition, similarities.shape)
-        C_list = np.unravel_index(c_list, self.conv1.weight[0].shape)
-        self.to_zero = (a_list, *C_list)
-
+        self.that_weight_magic(x, out, self.conv1, batch_size, "self.conv1")
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
@@ -113,14 +99,48 @@ class Wide_ResNet_sim(nn.Module):
         out = out.view(out.size(0), -1)
         out = self.linear(out)
 
-        # print(len(out))
-
         return out
 
     def set_w(self):
         with torch.no_grad():
-            self.conv1.weight[self.to_zero] = 0
-            self.conv1.weight[self.to_randn] = torch.randn(self.conv1.weight[self.to_randn].shape)
+            conv, to_randn, to_zero, log_name = self.to_deal
+            conv.weight[to_zero] = 0
+            conv.weight[to_randn] = torch.randn(conv.weight[to_randn].shape)
+            self.writer.add_histogram(log_name, conv.weight, self.global_step)
+            self.writer.add_scalar(log_name+" nonzero weights", np.count_nonzero(conv.weight), self.global_step)
+            self.writer.add_scalar(log_name+" weight count", conv.weight.numel(), self.global_step)
+            self.writer.add_scalar(log_name+" sparsity", 100*(1-np.count_nonzero(conv.weight)/conv.weight.numel()), self.global_step)
+        self.global_step += 1
+        self.writer.flush()
+
+
+
+    def that_weight_magic(self, x, out, conv, batch_size, log_name):
+        unfold = F.unfold(x, kernel_size=conv.kernel_size, padding=conv.padding, stride=conv.stride)
+        that_out_size = conv.in_channels * np.prod(conv.kernel_size)
+
+        similarities = torch.einsum('bkd,bcd->kdc', out.reshape(batch_size, conv.out_channels, -1),
+                                    unfold.reshape(batch_size, that_out_size, -1))
+
+        K = int(conv.weight.numel() * 0.05)  # TODO constant
+
+        nonzero_weights_tensor = (conv.weight.reshape(conv.out_channels, that_out_size) != 0).int()
+
+        max_similarities = torch.einsum('abc,ac->abc', similarities, 1 - nonzero_weights_tensor).detach().numpy().max(
+            axis=1)
+        to_randn = get_index_list(get_indexes_of_k_smallest(max_similarities, -K), max_similarities, conv)
+
+        min_similarities = torch.einsum('abc,ac->abc', similarities, nonzero_weights_tensor).detach().numpy().min(
+            axis=1)
+        to_zero = get_index_list(get_indexes_of_k_smallest(min_similarities, K), min_similarities, conv)
+
+        self.to_deal = conv, to_randn, to_zero, log_name
+
+
+def get_index_list(partition, similarities, conv):
+    a_list, c_list = np.unravel_index(partition, similarities.shape)
+    C_list = np.unravel_index(c_list, conv.weight[0].shape)
+    return a_list, *C_list
 
 
 def get_indexes_of_k_smallest(arr, k):

@@ -1,23 +1,21 @@
 from __future__ import print_function
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
-import torch.backends.cudnn as cudnn
-import config as cf
+import argparse
+import os
+import time
 
+import torch.backends.cudnn as cudnn
+import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
-
-import os
-import sys
-import time
-import argparse
-import datetime
-
-from networks import *
 from torch.autograd import Variable
+from torch.utils.tensorboard import SummaryWriter
+
+import config as cf
+from networks import *
+
+writer = SummaryWriter()
+global_step = 0
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR-10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning_rate')
@@ -103,7 +101,7 @@ def getNetwork(args):
         file_name = 'wide-resnet-init2'+str(args.depth)+'x'+str(args.widen_factor)
 
     elif (args.net_type == 'wide-resnet-sim'):
-        net = Wide_ResNet_sim(args.depth, args.widen_factor, args.dropout, num_classes)
+        net = Wide_ResNet_sim(writer, args.depth, args.widen_factor, args.dropout, num_classes)
         file_name = 'wide-resnet-sim'+str(args.depth)+'x'+str(args.widen_factor)
 
     else:
@@ -197,11 +195,21 @@ def train(epoch):
         total += targets.size(0)
         correct += predicted.eq(targets.data).cpu().sum()
 
+        len(trainloader)
+
+        writer.add_scalar("loss", loss.item(), (epoch-1)*len(trainloader)+batch_idx+1, new_style=True)
+        writer.add_scalar("acc", 100.*correct/total, (epoch-1)*len(trainloader)+batch_idx+1, new_style=True)
+        writer.flush()
+
         sys.stdout.write('\r')
         sys.stdout.write('| Epoch [%3d/%3d] Iter[%3d/%3d]\t\tLoss: %.4f Acc@1: %.3f%%'
                 %(epoch, num_epochs, batch_idx+1,
                     (len(trainset)//batch_size)+1, loss.item(), 100.*correct/total))
         sys.stdout.flush()
+
+    writer.add_scalar("loss by epoch", loss.item(), epoch, new_style=True)
+    writer.add_scalar("acc by epoch", 100. * correct / total, epoch, new_style=True)
+    writer.flush()
 
 def test(epoch):
     global best_acc
