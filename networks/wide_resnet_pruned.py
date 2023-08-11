@@ -89,6 +89,9 @@ class Wide_ResNetPruned(nn.Module):
 
         return out
 
+    def set_w(self):
+        pass
+
 if __name__ == '__main__':
     net=Wide_ResNetPruned(28, 10, 0.3, 10)
     y = net(Variable(torch.randn(1,3,32,32)))

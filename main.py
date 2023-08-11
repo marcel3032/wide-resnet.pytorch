@@ -2,6 +2,7 @@ from __future__ import print_function
 
 import argparse
 import os
+import sys
 import time
 
 import torch.backends.cudnn as cudnn
@@ -14,7 +15,7 @@ from torch.utils.tensorboard import SummaryWriter
 import config as cf
 from networks import *
 
-writer = SummaryWriter()
+writer = SummaryWriter(comment='-'+' '.join(sys.argv))
 global_step = 0
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR-10 Training')
@@ -26,6 +27,7 @@ parser.add_argument('--dropout', default=0.3, type=float, help='dropout_rate')
 parser.add_argument('--dataset', default='cifar10', type=str, help='dataset = [cifar10/cifar100]')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
 parser.add_argument('--testOnly', '-t', action='store_true', help='Test mode with the saved model')
+parser.add_argument('--comment', help='There you can write any comment you like.')
 args = parser.parse_args()
 
 # Hyper Parameter settings
@@ -201,14 +203,15 @@ def train(epoch):
         writer.add_scalar("acc", 100.*correct/total, (epoch-1)*len(trainloader)+batch_idx+1, new_style=True)
         writer.flush()
 
+        acc = 100.*correct/total
         sys.stdout.write('\r')
         sys.stdout.write('| Epoch [%3d/%3d] Iter[%3d/%3d]\t\tLoss: %.4f Acc@1: %.3f%%'
                 %(epoch, num_epochs, batch_idx+1,
-                    (len(trainset)//batch_size)+1, loss.item(), 100.*correct/total))
+                    (len(trainset)//batch_size)+1, loss.item(), acc))
         sys.stdout.flush()
 
     writer.add_scalar("loss by epoch", loss.item(), epoch, new_style=True)
-    writer.add_scalar("acc by epoch", 100. * correct / total, epoch, new_style=True)
+    writer.add_scalar("acc by epoch", acc, epoch, new_style=True)
     writer.flush()
 
 def test(epoch):
@@ -234,6 +237,10 @@ def test(epoch):
         # Save checkpoint when best model
         acc = 100.*correct/total
         print("\n| Validation Epoch #%d\t\t\tLoss: %.4f Acc@1: %.2f%%" %(epoch, loss.item(), acc))
+
+        writer.add_scalar("validation loss by epoch", loss.item(), epoch, new_style=True)
+        writer.add_scalar("validation acc by epoch", acc, new_style=True)
+        writer.flush()
 
         if acc > best_acc:
             print('| Saving Best model...\t\t\tTop1 = %.2f%%' %(acc))
