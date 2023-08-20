@@ -11,6 +11,7 @@ import torchvision
 import torchvision.transforms as transforms
 from torch.autograd import Variable
 from torch.utils.tensorboard import SummaryWriter
+import torch
 
 import config as cf
 from networks import *
@@ -190,7 +191,11 @@ def train(epoch):
         loss.backward()  # Backward Propagation
         optimizer.step() # Optimizer update
 
-        net.set_w()
+
+        if isinstance(net, torch.nn.DataParallel):
+            net.module.set_w()
+        else:
+            net.set_w()
 
         train_loss += loss.item()
         _, predicted = torch.max(outputs.data, 1)

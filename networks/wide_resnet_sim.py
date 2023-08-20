@@ -53,14 +53,14 @@ class wide_basic(nn.Module):
 
         inp = out
         out = self.conv1(out)
-        to_deal.append(that_weight_magic_faiss(inp, out, self.conv1, out.shape[0], self.name + " self.conv1"))
+        to_deal.append(that_weight_magic(inp, out, self.conv1, out.shape[0], self.name + " self.conv1"))
 
         out = self.dropout(out)
         out = F.relu(self.bn2(out))
 
         inp = out
         out = self.conv2(out)
-        to_deal.append(that_weight_magic_faiss(inp, out, self.conv2, out.shape[0], self.name + " self.conv2"))
+        to_deal.append(that_weight_magic(inp, out, self.conv2, out.shape[0], self.name + " self.conv2"))
 
         out += self.shortcut(x)
 
@@ -105,7 +105,7 @@ class Wide_ResNet_sim(nn.Module):
         batch_size = x.shape[0]
 
         out = self.conv1(x)
-        to_deal.append(that_weight_magic_faiss(x, out, self.conv1, batch_size, "self.conv1"))
+        to_deal.append(that_weight_magic(x, out, self.conv1, batch_size, "self.conv1"))
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
@@ -117,17 +117,18 @@ class Wide_ResNet_sim(nn.Module):
         return out
 
     def set_w(self):
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         global to_deal
         with torch.no_grad():
             for conv, to_randn, to_zero, log_name in to_deal:
                 # print(conv, to_randn, to_zero, log_name)
                 conv.weight[to_zero] = 0
-                conv.weight[to_randn] = torch.randn(conv.weight[to_randn].shape)
+                conv.weight[to_randn] = torch.randn(conv.weight[to_randn].shape).to(device)
                 self.writer.add_histogram(log_name, conv.weight, self.global_step)
-                self.writer.add_scalar(log_name + " nonzero weights", np.count_nonzero(conv.weight), self.global_step)
+                self.writer.add_scalar(log_name + " nonzero weights", torch.count_nonzero(conv.weight), self.global_step)
                 self.writer.add_scalar(log_name + " weight count", conv.weight.numel(), self.global_step)
                 self.writer.add_scalar(log_name + " sparsity",
-                                       100 * (1 - np.count_nonzero(conv.weight) / conv.weight.numel()),
+                                       100 * (1 - torch.count_nonzero(conv.weight) / conv.weight.numel()),
                                        self.global_step)
         self.global_step += 1
         self.writer.flush()
@@ -185,11 +186,11 @@ def that_weight_magic(x, out, conv, batch_size, log_name):
 
     nonzero_weights_tensor = (conv.weight.reshape(conv.out_channels, that_out_size) != 0).int()
 
-    max_similarities = torch.einsum('abc,ac->abc', similarities, 1 - nonzero_weights_tensor).detach().numpy().max(
+    max_similarities = torch.einsum('abc,ac->abc', similarities, 1 - nonzero_weights_tensor).detach().cpu().numpy().max(
         axis=1)
     to_randn = get_index_list(get_indexes_of_k_smallest(max_similarities, -K), max_similarities, conv)
 
-    min_similarities = torch.einsum('abc,ac->abc', similarities, nonzero_weights_tensor).detach().numpy().min(axis=1)
+    min_similarities = torch.einsum('abc,ac->abc', similarities, nonzero_weights_tensor).detach().cpu().numpy().min(axis=1)
     to_zero = get_index_list(get_indexes_of_k_smallest(min_similarities, K), min_similarities, conv)
 
     return conv, to_randn, to_zero, log_name
