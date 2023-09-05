@@ -70,9 +70,9 @@ class wide_basic(nn.Module):
 class Wide_ResNet_sim(nn.Module):
     def __init__(self, writer: SummaryWriter, depth, widen_factor, dropout_rate, num_classes):
         super(Wide_ResNet_sim, self).__init__()
-        self.writer = writer
         self.global_step = 0
         self.in_planes = 16
+        self.conv_to_log = set()
 
         assert ((depth - 4) % 6 == 0), 'Wide-resnet depth should be 6n+4'
         n = (depth - 4) / 6
@@ -116,7 +116,7 @@ class Wide_ResNet_sim(nn.Module):
 
         return out
 
-    def set_w(self):
+    def set_w(self, writer: SummaryWriter):
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         global to_deal
         with torch.no_grad():
@@ -124,14 +124,9 @@ class Wide_ResNet_sim(nn.Module):
                 # print(conv, to_randn, to_zero, log_name)
                 conv.weight[to_zero] = 0
                 conv.weight[to_randn] = torch.randn(conv.weight[to_randn].shape).to(device)
-                self.writer.add_histogram(log_name, conv.weight, self.global_step)
-                self.writer.add_scalar(log_name + " nonzero weights", torch.count_nonzero(conv.weight), self.global_step)
-                self.writer.add_scalar(log_name + " weight count", conv.weight.numel(), self.global_step)
-                self.writer.add_scalar(log_name + " sparsity",
-                                       100 * (1 - torch.count_nonzero(conv.weight) / conv.weight.numel()),
-                                       self.global_step)
+                self.conv_to_log.add((conv, log_name))
         self.global_step += 1
-        self.writer.flush()
+        writer.flush()
         to_deal = []
 
 
@@ -157,14 +152,14 @@ def that_weight_magic_faiss(x, out, conv, batch_size, log_name):
         for j in range(conv.out_channels):
             if conv.weight.reshape(conv.out_channels, that_out_size)[j][i] == 0:
                 D, I = index.search(out.reshape(batch_size, conv.out_channels, -1)[:, j, :].T.detach().numpy(), 1)
-                to_rand[j][i] = D.min()
+                to_rand[j][i] = D.mean()
 
                 to_zero[j][i] = np.inf
             else:
                 to_rand[j][i] = np.inf
 
                 D, I = index.search(-1 * out.reshape(batch_size, conv.out_channels, -1)[:, j, :].T.detach().numpy(), 1)
-                to_zero[j][i] = D.min()
+                to_zero[j][i] = D.mean()
 
     K = int(conv.weight.numel() * 0.05)  # TODO constant
 

@@ -82,7 +82,7 @@ class Wide_ResNet(nn.Module):
 
         return out
 
-    def set_w(self):
+    def set_w(self, writer):
         pass
 
 if __name__ == '__main__':

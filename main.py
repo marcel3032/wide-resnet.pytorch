@@ -193,9 +193,9 @@ def train(epoch):
 
 
         if isinstance(net, torch.nn.DataParallel):
-            net.module.set_w()
+            net.module.set_w(writer)
         else:
-            net.set_w()
+            net.set_w(writer)
 
         train_loss += loss.item()
         _, predicted = torch.max(outputs.data, 1)
@@ -238,13 +238,21 @@ def test(epoch):
             _, predicted = torch.max(outputs.data, 1)
             total += targets.size(0)
             correct += predicted.eq(targets.data).cpu().sum()
+        try:
+            for conv, log_name in (net.module if use_cuda else net).conv_to_log:
+                writer.add_histogram(log_name, conv.weight, epoch)
+                writer.add_scalar(log_name + " nonzero weights", torch.count_nonzero(conv.weight), epoch)
+                writer.add_scalar(log_name + " weight count", conv.weight.numel(), epoch)
+                writer.add_scalar(log_name + " sparsity", 100 * (1 - torch.count_nonzero(conv.weight) / conv.weight.numel()), epoch)
+        except:
+            pass
 
         # Save checkpoint when best model
         acc = 100.*correct/total
         print("\n| Validation Epoch #%d\t\t\tLoss: %.4f Acc@1: %.2f%%" %(epoch, loss.item(), acc))
 
         writer.add_scalar("validation loss by epoch", loss.item(), epoch, new_style=True)
-        writer.add_scalar("validation acc by epoch", acc, new_style=True)
+        writer.add_scalar("validation acc by epoch", acc, epoch, new_style=True)
         writer.flush()
 
         if acc > best_acc:
