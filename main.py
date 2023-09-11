@@ -16,9 +16,6 @@ import torch
 import config as cf
 from networks import *
 
-writer = SummaryWriter(comment='-'+' '.join(sys.argv))
-global_step = 0
-
 parser = argparse.ArgumentParser(description='PyTorch CIFAR-10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning_rate')
 parser.add_argument('--net_type', default='wide-resnet', type=str, help='model')
@@ -28,8 +25,15 @@ parser.add_argument('--dropout', default=0.3, type=float, help='dropout_rate')
 parser.add_argument('--dataset', default='cifar10', type=str, help='dataset = [cifar10/cifar100]')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
 parser.add_argument('--testOnly', '-t', action='store_true', help='Test mode with the saved model')
+parser.add_argument('--no_logs', action='store_true', help="don't log tensorboard SummaryWriter")
 parser.add_argument('--comment', help='There you can write any comment you like.')
 args = parser.parse_args()
+
+if args.no_logs:
+    writer = SummaryWriter(comment='-to-delete')
+else:
+    writer = SummaryWriter(comment='-'+' '.join(sys.argv))
+global_step = 0
 
 # Hyper Parameter settings
 use_cuda = torch.cuda.is_available()

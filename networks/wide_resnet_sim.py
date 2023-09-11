@@ -53,14 +53,14 @@ class wide_basic(nn.Module):
 
         inp = out
         out = self.conv1(out)
-        to_deal.append(that_weight_magic(inp, out, self.conv1, out.shape[0], self.name + " self.conv1"))
+        to_deal.append(that_weight_magic_faiss(inp, out, self.conv1, out.shape[0], self.name + " self.conv1"))
 
         out = self.dropout(out)
         out = F.relu(self.bn2(out))
 
         inp = out
         out = self.conv2(out)
-        to_deal.append(that_weight_magic(inp, out, self.conv2, out.shape[0], self.name + " self.conv2"))
+        to_deal.append(that_weight_magic_faiss(inp, out, self.conv2, out.shape[0], self.name + " self.conv2"))
 
         out += self.shortcut(x)
 
@@ -105,7 +105,7 @@ class Wide_ResNet_sim(nn.Module):
         batch_size = x.shape[0]
 
         out = self.conv1(x)
-        to_deal.append(that_weight_magic(x, out, self.conv1, batch_size, "self.conv1"))
+        to_deal.append(that_weight_magic_faiss(x, out, self.conv1, batch_size, "self.conv1"))
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
@@ -140,33 +140,34 @@ def that_weight_magic_faiss(x, out, conv, batch_size, log_name):
     # print(out.reshape(batch_size, conv.out_channels, -1).shape)
     # print(conv.weight.shape)
 
-    to_rand = np.empty((conv.out_channels, that_out_size), 'float32')
-    to_zero = np.empty((conv.out_channels, that_out_size), 'float32')
+    to_rand = np.empty((conv.out_channels, 0), 'float32')
+    to_zero = np.empty((conv.out_channels, 0), 'float32')
 
     # nonzero = (conv.weight.reshape(conv.out_channels, that_out_size) != 0).int().nonzero()
     # zero = (conv.weight.reshape(conv.out_channels, that_out_size) == 0).int().nonzero()
 
+    print(that_out_size * conv.out_channels, that_out_size, conv.out_channels, flush=True)
+
     for i in range(that_out_size):
         index = faiss.IndexFlatL2(batch_size)
-        index.add(unfold[:, i, :].T.detach().numpy())  # 1024 vektorov veľkosti batch size (to je aktuálne 128)
-        for j in range(conv.out_channels):
-            if conv.weight.reshape(conv.out_channels, that_out_size)[j][i] == 0:
-                D, I = index.search(out.reshape(batch_size, conv.out_channels, -1)[:, j, :].T.detach().numpy(), 1)
-                to_rand[j][i] = D.mean()
+        index.add(unfold[:, i, :].T.detach().cpu().numpy())  # 1024 vektorov veľkosti batch size (to je aktuálne 128)
 
-                to_zero[j][i] = np.inf
-            else:
-                to_rand[j][i] = np.inf
+        vectors_to_search = np.moveaxis(out.reshape(batch_size, conv.out_channels, -1).T.detach().cpu().numpy(), 0, 1)
+        print(i)
+        D, I = index.search(vectors_to_search.reshape(-1, batch_size)[:, :], 1)
+        to_rand = np.hstack((to_rand, D.reshape(-1, conv.out_channels).mean(axis=0).reshape(-1, 1)))
+        D, I = index.search(-1 * vectors_to_search.reshape(-1, batch_size)[:, :], 1)
+        to_zero = np.hstack((to_zero, D.reshape(-1, conv.out_channels).mean(axis=0).reshape(-1, 1)))
 
-                D, I = index.search(-1 * out.reshape(batch_size, conv.out_channels, -1)[:, j, :].T.detach().numpy(), 1)
-                to_zero[j][i] = D.mean()
+    to_rand[(conv.weight.detach().cpu().numpy().reshape(conv.out_channels, that_out_size) != 0)] = np.inf
+    to_zero[(conv.weight.detach().cpu().numpy().reshape(conv.out_channels, that_out_size) == 0)] = np.inf
 
     K = int(conv.weight.numel() * 0.05)  # TODO constant
 
-    to_randn = get_index_list(get_indexes_of_k_smallest(to_rand, K), to_rand, conv)
+    to_rand = get_index_list(get_indexes_of_k_smallest(to_rand, K), to_rand, conv)
     to_zero = get_index_list(get_indexes_of_k_smallest(to_zero, K), to_zero, conv)
 
-    return conv, to_randn, to_zero, log_name
+    return conv, to_rand, to_zero, log_name
 
 
 def that_weight_magic(x, out, conv, batch_size, log_name):
