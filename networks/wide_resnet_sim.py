@@ -131,37 +131,39 @@ class Wide_ResNet_sim(nn.Module):
 
 
 def that_weight_magic_faiss(x, out, conv, batch_size, log_name):
+    K = int(conv.weight.numel() * 0.05)  # TODO constant
+
     unfold = F.unfold(x, kernel_size=conv.kernel_size, padding=conv.padding, stride=conv.stride)
     that_out_size = conv.in_channels * np.prod(conv.kernel_size)
 
-    print(that_out_size * conv.out_channels, that_out_size, conv.out_channels, flush=True)
+    unfold = unfold.mean(axis=2).detach().cpu().numpy().T
+    out = out.mean(axis=(2, 3)).detach().cpu().numpy().T
 
-    to_rand = np.empty((0, that_out_size), 'float32')
-    to_zero = np.empty((0, that_out_size), 'float32')
+    index = faiss.IndexFlatL2(batch_size)
+    index.add(unfold)
 
-    vectors_to_search = np.moveaxis(unfold.reshape(batch_size, that_out_size, -1).T.detach().cpu().numpy(), 0,
-                                    1).reshape(-1, batch_size)
+    other_dim = int(that_out_size) // 5
 
-    for i in range(conv.out_channels):
-        print(i, flush=True)
+    D, I_rand = index.search(out, other_dim)
+    to_rand_idx = np.array((np.repeat(np.arange(conv.out_channels), other_dim).reshape(conv.out_channels, other_dim),
+                            *np.unravel_index(I_rand, conv.weight.shape[1:]))).reshape(len(conv.weight.shape), -1)
+    conv_w = conv.weight[to_rand_idx].detach().cpu().numpy()
 
-        index = faiss.IndexFlatL2(batch_size)
-        index.add(out.reshape(batch_size, conv.out_channels, -1)[:, i, :].T.detach().cpu().numpy())
+    to_rand = D.reshape(-1)
+    to_rand[conv_w != 0] = np.inf
 
-        D, I = index.search(vectors_to_search, 1)
-        to_rand = np.vstack((to_rand, D.reshape(-1, that_out_size).mean(axis=0)))
-        D, I = index.search(-1 * vectors_to_search, 1)
-        to_zero = np.vstack((to_zero, D.reshape(-1, that_out_size).mean(axis=0)))
+    D, I_zero = index.search(-1 * out, other_dim)
+    to_zero_idx = np.array((np.repeat(np.arange(conv.out_channels), other_dim).reshape(conv.out_channels, other_dim),
+                            *np.unravel_index(I_zero, conv.weight.shape[1:]))).reshape(len(conv.weight.shape), -1)
+    conv_w = conv.weight[to_zero_idx].detach().cpu().numpy()
 
-    to_rand[(conv.weight.detach().cpu().numpy().reshape(conv.out_channels, that_out_size) != 0)] = np.inf
-    to_zero[(conv.weight.detach().cpu().numpy().reshape(conv.out_channels, that_out_size) == 0)] = np.inf
+    to_zero = D.reshape(-1)
+    to_zero[conv_w == 0] = np.inf
 
-    K = int(conv.weight.numel() * 0.05)  # TODO constant
+    to_rand_idx = to_rand_idx.T[np.argpartition(to_rand, K)[:K]]
+    to_zero_idx = to_zero_idx.T[np.argpartition(to_zero, K)[:K]]
 
-    to_rand = get_index_list(get_indexes_of_k_smallest(to_rand, K), to_rand, conv)
-    to_zero = get_index_list(get_indexes_of_k_smallest(to_zero, K), to_zero, conv)
-
-    return conv, to_rand, to_zero, log_name
+    return conv, to_rand_idx.T, to_zero_idx.T, log_name
 
 
 def that_weight_magic(x, out, conv, batch_size, log_name):
@@ -180,7 +182,8 @@ def that_weight_magic(x, out, conv, batch_size, log_name):
         axis=1)
     to_randn = get_index_list(get_indexes_of_k_smallest(max_similarities, -K), max_similarities, conv)
 
-    min_similarities = torch.einsum('abc,ac->abc', similarities, nonzero_weights_tensor).detach().cpu().numpy().min(axis=1)
+    min_similarities = torch.einsum('abc,ac->abc', similarities, nonzero_weights_tensor).detach().cpu().numpy().min(
+        axis=1)
     to_zero = get_index_list(get_indexes_of_k_smallest(min_similarities, K), min_similarities, conv)
 
     return conv, to_randn, to_zero, log_name
@@ -202,6 +205,7 @@ if __name__ == '__main__':
 
     writer = SummaryWriter()
     net = Wide_ResNet_sim(writer, 28, 10, 0.3, 10)
+    net.apply(conv_init)
     y = net(Variable(torch.randn(128, 3, 32, 32)))
 
     print(y.size())
