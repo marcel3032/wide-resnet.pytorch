@@ -134,30 +134,24 @@ def that_weight_magic_faiss(x, out, conv, batch_size, log_name):
     unfold = F.unfold(x, kernel_size=conv.kernel_size, padding=conv.padding, stride=conv.stride)
     that_out_size = conv.in_channels * np.prod(conv.kernel_size)
 
-    # print()
-    # print(unfold.shape)
-    # print(unfold.reshape(batch_size, that_out_size, -1).shape)
-    # print(out.reshape(batch_size, conv.out_channels, -1).shape)
-    # print(conv.weight.shape)
-
-    to_rand = np.empty((conv.out_channels, 0), 'float32')
-    to_zero = np.empty((conv.out_channels, 0), 'float32')
-
-    # nonzero = (conv.weight.reshape(conv.out_channels, that_out_size) != 0).int().nonzero()
-    # zero = (conv.weight.reshape(conv.out_channels, that_out_size) == 0).int().nonzero()
-
     print(that_out_size * conv.out_channels, that_out_size, conv.out_channels, flush=True)
 
-    for i in range(that_out_size):
-        index = faiss.IndexFlatL2(batch_size)
-        index.add(unfold[:, i, :].T.detach().cpu().numpy())  # 1024 vektorov veľkosti batch size (to je aktuálne 128)
+    to_rand = np.empty((0, that_out_size), 'float32')
+    to_zero = np.empty((0, that_out_size), 'float32')
 
-        vectors_to_search = np.moveaxis(out.reshape(batch_size, conv.out_channels, -1).T.detach().cpu().numpy(), 0, 1)
-        print(i)
-        D, I = index.search(vectors_to_search.reshape(-1, batch_size)[:, :], 1)
-        to_rand = np.hstack((to_rand, D.reshape(-1, conv.out_channels).mean(axis=0).reshape(-1, 1)))
-        D, I = index.search(-1 * vectors_to_search.reshape(-1, batch_size)[:, :], 1)
-        to_zero = np.hstack((to_zero, D.reshape(-1, conv.out_channels).mean(axis=0).reshape(-1, 1)))
+    vectors_to_search = np.moveaxis(unfold.reshape(batch_size, that_out_size, -1).T.detach().cpu().numpy(), 0,
+                                    1).reshape(-1, batch_size)
+
+    for i in range(conv.out_channels):
+        print(i, flush=True)
+
+        index = faiss.IndexFlatL2(batch_size)
+        index.add(out.reshape(batch_size, conv.out_channels, -1)[:, i, :].T.detach().cpu().numpy())
+
+        D, I = index.search(vectors_to_search, 1)
+        to_rand = np.vstack((to_rand, D.reshape(-1, that_out_size).mean(axis=0)))
+        D, I = index.search(-1 * vectors_to_search, 1)
+        to_zero = np.vstack((to_zero, D.reshape(-1, that_out_size).mean(axis=0)))
 
     to_rand[(conv.weight.detach().cpu().numpy().reshape(conv.out_channels, that_out_size) != 0)] = np.inf
     to_zero[(conv.weight.detach().cpu().numpy().reshape(conv.out_channels, that_out_size) == 0)] = np.inf
