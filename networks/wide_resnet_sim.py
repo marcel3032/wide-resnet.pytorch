@@ -142,7 +142,7 @@ def that_weight_magic_faiss(x, out, conv, batch_size, log_name):
     index = faiss.IndexFlatL2(batch_size)
     index.add(unfold)
 
-    other_dim = int(that_out_size) // 5
+    other_dim = int(that_out_size) // 10
 
     D, I_rand = index.search(out, other_dim)
     to_rand_idx = np.array((np.repeat(np.arange(conv.out_channels), other_dim).reshape(conv.out_channels, other_dim),
