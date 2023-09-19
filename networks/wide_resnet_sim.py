@@ -53,14 +53,16 @@ class wide_basic(nn.Module):
 
         inp = out
         out = self.conv1(out)
-        to_deal.append(that_weight_magic_faiss(inp, out, self.conv1, out.shape[0], self.name + " self.conv1"))
+        if torch.is_grad_enabled():
+            to_deal.append(that_weight_magic(inp, out, self.conv1, out.shape[0], self.name + " self.conv1"))
 
         out = self.dropout(out)
         out = F.relu(self.bn2(out))
 
         inp = out
         out = self.conv2(out)
-        to_deal.append(that_weight_magic_faiss(inp, out, self.conv2, out.shape[0], self.name + " self.conv2"))
+        if torch.is_grad_enabled():
+            to_deal.append(that_weight_magic(inp, out, self.conv2, out.shape[0], self.name + " self.conv2"))
 
         out += self.shortcut(x)
 
@@ -105,7 +107,8 @@ class Wide_ResNet_sim(nn.Module):
         batch_size = x.shape[0]
 
         out = self.conv1(x)
-        to_deal.append(that_weight_magic_faiss(x, out, self.conv1, batch_size, "self.conv1"))
+        if torch.is_grad_enabled():
+            to_deal.append(that_weight_magic(x, out, self.conv1, batch_size, "self.conv1"))
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
@@ -167,37 +170,33 @@ def that_weight_magic_faiss(x, out, conv, batch_size, log_name):
 
 
 def that_weight_magic(x, out, conv, batch_size, log_name):
+    K = int(conv.weight.numel() * 0.05)  # TODO constant
+
     unfold = F.unfold(x, kernel_size=conv.kernel_size, padding=conv.padding, stride=conv.stride)
     that_out_size = conv.in_channels * np.prod(conv.kernel_size)
 
-    similarities = torch.einsum('bkd,bcd->kdc',
-                                out.reshape(batch_size, conv.out_channels, -1),
-                                unfold.reshape(batch_size, that_out_size, -1))
+    unfold = unfold.mean(axis=2).detach().cpu().numpy().T
+    out = out.mean(axis=(2, 3)).detach().cpu().numpy().T
 
-    K = int(conv.weight.numel() * 0.05)  # TODO constant
+    similarities = out.dot(unfold.T)
 
-    nonzero_weights_tensor = (conv.weight.reshape(conv.out_channels, that_out_size) != 0).int()
+    nonzero_weights_tensor = (conv.weight.reshape(conv.out_channels, that_out_size) != 0).int().detach().cpu().numpy()
 
-    max_similarities = torch.einsum('abc,ac->abc', similarities, 1 - nonzero_weights_tensor).detach().cpu().numpy().max(
-        axis=1)
-    to_randn = get_index_list(get_indexes_of_k_smallest(max_similarities, -K), max_similarities, conv)
+    max_similarities = similarities * (1 - nonzero_weights_tensor)
+    to_randn = get_index_list(get_indexes_of_k_smallest(max_similarities, -K), conv)
 
-    min_similarities = torch.einsum('abc,ac->abc', similarities, nonzero_weights_tensor).detach().cpu().numpy().min(
-        axis=1)
-    to_zero = get_index_list(get_indexes_of_k_smallest(min_similarities, K), min_similarities, conv)
+    min_similarities = similarities * nonzero_weights_tensor
+    to_zero = get_index_list(get_indexes_of_k_smallest(min_similarities, K), conv)
 
     return conv, to_randn, to_zero, log_name
 
 
-def get_index_list(partition, similarities, conv):
-    a_list, c_list = np.unravel_index(partition, similarities.shape)
-    C_list = np.unravel_index(c_list, conv.weight[0].shape)
-    return a_list, *C_list
+def get_index_list(indices, conv):
+    return np.unravel_index(indices, conv.weight.shape)
 
 
 def get_indexes_of_k_smallest(arr, k):
-    idx = np.argpartition(arr.ravel(), k)
-    return idx[range(min(k, 0), max(k, 0))].T
+    return np.argpartition(arr.reshape(-1), k)
 
 
 if __name__ == '__main__':
