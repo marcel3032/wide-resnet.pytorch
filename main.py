@@ -197,9 +197,9 @@ def train(epoch):
 
 
         if isinstance(net, torch.nn.DataParallel):
-            net.module.set_w(writer)
+            net.module.update_weights(writer)
         else:
-            net.set_w(writer)
+            net.update_weights(writer)
 
         train_loss += loss.item()
         _, predicted = torch.max(outputs.data, 1)
