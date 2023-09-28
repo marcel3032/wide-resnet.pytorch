@@ -12,26 +12,17 @@ import faiss
 
 weight_to_update = []
 
-
 def conv3x3(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=True)
 
 
-def conv_init(m):
-    classname = m.__class__.__name__
-    if classname.find('Conv') != -1:
-        init.xavier_uniform_(m.weight, gain=np.sqrt(2))
-        init.constant_(m.bias, 0)
-        prune.random_unstructured(m, 'weight', amount=0.8)
-    elif classname.find('BatchNorm') != -1:
-        init.constant_(m.weight, 1)
-        init.constant_(m.bias, 0)
-
 
 class wide_basic(nn.Module):
-    def __init__(self, in_planes, planes, dropout_rate, stride=1, name=None):
+    def __init__(self, in_planes, planes, dropout_rate, stride, K, k_similar, name=None):
         super(wide_basic, self).__init__()
         self.name = name
+        self.K = K
+        self.k_similar = k_similar
         self.bn1 = nn.BatchNorm2d(in_planes)
         self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, padding=1, bias=True)
         self.dropout = nn.Dropout(p=dropout_rate)
@@ -50,7 +41,7 @@ class wide_basic(nn.Module):
         inp = out
         out = self.conv1(out)
         if torch.is_grad_enabled():
-            weight_to_update.append(similarity_magic_faiss(inp, out, self.conv1, out.shape[0], self.name + " self.conv1"))
+            weight_to_update.append(similarity_magic_faiss(inp, out, self.conv1, out.shape[0], self.name + " self.conv1", self.K, self.k_similar))
 
         out = self.dropout(out)
         out = F.relu(self.bn2(out))
@@ -58,20 +49,20 @@ class wide_basic(nn.Module):
         inp = out
         out = self.conv2(out)
         if torch.is_grad_enabled():
-            weight_to_update.append(similarity_magic_faiss(inp, out, self.conv2, out.shape[0], self.name + " self.conv2"))
+            weight_to_update.append(similarity_magic_faiss(inp, out, self.conv2, out.shape[0], self.name + " self.conv2", self.K, self.k_similar))
 
         out += self.shortcut(x)
         if torch.is_grad_enabled():
             assert len(self.shortcut) in [0, 1]
             if len(self.shortcut) == 1:
                 weight_to_update.append(
-                    similarity_magic_faiss(x, out, self.shortcut[0], out.shape[0], self.name + " self.shortcut"))
+                    similarity_magic_faiss(x, out, self.shortcut[0], out.shape[0], self.name + " self.shortcut", self.K, self.k_similar))
 
         return out
 
 
 class Wide_ResNet_sim(nn.Module):
-    def __init__(self, writer: SummaryWriter, depth, widen_factor, dropout_rate, num_classes):
+    def __init__(self, writer: SummaryWriter, depth, widen_factor, dropout_rate, num_classes, K, k_similar):
         super(Wide_ResNet_sim, self).__init__()
         self.global_step = 0
         self.in_planes = 16
@@ -85,20 +76,22 @@ class Wide_ResNet_sim(nn.Module):
         nStages = [16, 16 * k, 32 * k, 64 * k]
 
         self.conv1 = conv3x3(3, nStages[0])
-        self.layer1 = self._wide_layer(wide_basic, nStages[1], n, dropout_rate, stride=1, name="self.layer1")
-        self.layer2 = self._wide_layer(wide_basic, nStages[2], n, dropout_rate, stride=2, name="self.layer2")
-        self.layer3 = self._wide_layer(wide_basic, nStages[3], n, dropout_rate, stride=2, name="self.layer3")
+        self.layer1 = self._wide_layer(wide_basic, nStages[1], n, dropout_rate, 1, K, k_similar, name="self.layer1")
+        self.layer2 = self._wide_layer(wide_basic, nStages[2], n, dropout_rate, 2, K, k_similar, name="self.layer2")
+        self.layer3 = self._wide_layer(wide_basic, nStages[3], n, dropout_rate, 2, K, k_similar, name="self.layer3")
         self.bn1 = nn.BatchNorm2d(nStages[3], momentum=0.9)
         self.linear = nn.Linear(nStages[3], num_classes)
+        self.K = K
+        self.k_similar = k_similar
 
         prune.random_unstructured(self.linear, 'weight', amount=0.8)
 
-    def _wide_layer(self, block, planes, num_blocks, dropout_rate, stride, name):
+    def _wide_layer(self, block, planes, num_blocks, dropout_rate, stride, K, k_similar, name):
         strides = [stride] + [1] * (int(num_blocks) - 1)
         layers = []
 
         for stride in strides:
-            layers.append(block(self.in_planes, planes, dropout_rate, stride, name + ";stride" + str(stride)))
+            layers.append(block(self.in_planes, planes, dropout_rate, stride, K, k_similar, name + ";stride" + str(stride)))
             self.in_planes = planes
 
         return nn.Sequential(*layers)
@@ -108,7 +101,7 @@ class Wide_ResNet_sim(nn.Module):
 
         out = self.conv1(x)
         if torch.is_grad_enabled():
-            weight_to_update.append(similarity_magic_faiss(x, out, self.conv1, batch_size, "self.conv1"))
+            weight_to_update.append(similarity_magic_faiss(x, out, self.conv1, batch_size, "self.conv1", self.K, self.k_similar))
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
@@ -126,13 +119,24 @@ class Wide_ResNet_sim(nn.Module):
             for conv, to_randn, to_zero, log_name in weight_to_update:
                 conv.weight[to_zero] = 0
                 conv.weight[to_randn] = torch.randn(conv.weight[to_randn].shape).to(device)
-                self.conv_to_log.add((conv, log_name))
+                # self.conv_to_log.add((conv, log_name))
         self.global_step += 1
         writer.flush()
         weight_to_update = []
 
+    @staticmethod
+    def conv_init(m):
+        classname = m.__class__.__name__
+        if classname.find('Conv') != -1:
+            init.xavier_uniform_(m.weight, gain=np.sqrt(2))
+            init.constant_(m.bias, 0)
+            prune.random_unstructured(m, 'weight', amount=0.8)
+        elif classname.find('BatchNorm') != -1:
+            init.constant_(m.weight, 1)
+            init.constant_(m.bias, 0)
 
-def similarity_magic_faiss(x, out, conv, batch_size, log_name):
+
+def similarity_magic_faiss(x, out, conv, batch_size, log_name, K, k_similar):
     def get_distances(index, conv, out, k):
         shape = conv.weight.shape
         D, I = index.search(out, k)
@@ -146,7 +150,7 @@ def similarity_magic_faiss(x, out, conv, batch_size, log_name):
 
         return idx, distances
 
-    K = int(conv.weight.numel() * 0.05)  # TODO constant
+    K = int(conv.weight.numel() * K)
 
     unfold = F.unfold(x, kernel_size=conv.kernel_size, padding=conv.padding, stride=conv.stride)
     out_size = conv.in_channels * np.prod(conv.kernel_size)
@@ -154,10 +158,10 @@ def similarity_magic_faiss(x, out, conv, batch_size, log_name):
     unfold = unfold.mean(axis=2).detach().cpu().numpy().T
     out = out.mean(axis=(2, 3)).detach().cpu().numpy().T
 
-    index = faiss.IndexFlatL2(batch_size)
+    index = faiss.IndexFlatIP(batch_size)
     index.add(unfold)
 
-    k_similar = int(out_size) // 10
+    k_similar = int(out_size * k_similar)
 
     to_rand_idx, to_rand = get_distances(index, conv, out, k_similar)
     to_rand_idx = to_rand_idx.T[np.argpartition(to_rand, K)[:K]]
@@ -168,8 +172,11 @@ def similarity_magic_faiss(x, out, conv, batch_size, log_name):
     return conv, to_rand_idx.T, to_zero_idx.T, log_name
 
 
-def similarity_magic(x, out, conv, batch_size, log_name):
-    K = int(conv.weight.numel() * 0.05)  # TODO constant
+def similarity_magic(x, out, conv, batch_size, log_name, K, k_similar):
+    def indices_of_smallest(arr, k, conv):
+        return np.unravel_index(np.argpartition(arr.reshape(-1), k), conv.weight.shape)
+
+    K = int(conv.weight.numel() * K)
 
     unfold = F.unfold(x, kernel_size=conv.kernel_size, padding=conv.padding, stride=conv.stride)
     out_size = conv.in_channels * np.prod(conv.kernel_size)
@@ -190,16 +197,12 @@ def similarity_magic(x, out, conv, batch_size, log_name):
     return conv, to_randn, to_zero, log_name
 
 
-def indices_of_smallest(arr, k, conv):
-    return np.unravel_index(np.argpartition(arr.reshape(-1), k), conv.weight.shape)
-
-
 if __name__ == '__main__':
     from torch.utils.tensorboard import SummaryWriter
 
     writer = SummaryWriter()
     net = Wide_ResNet_sim(writer, 28, 10, 0.3, 10)
-    net.apply(conv_init)
+    net.apply(net.conv_init)
     y = net(Variable(torch.randn(128, 3, 32, 32)))
 
     print(y.size())

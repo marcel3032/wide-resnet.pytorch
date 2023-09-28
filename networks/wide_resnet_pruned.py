@@ -11,14 +11,6 @@ import numpy as np
 def conv3x3(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=True)
 
-def conv_init(m):
-    classname = m.__class__.__name__
-    if classname.find('Conv') != -1:
-        init.xavier_uniform_(m.weight, gain=np.sqrt(2))
-        init.constant_(m.bias, 0)
-    elif classname.find('BatchNorm') != -1:
-        init.constant_(m.weight, 1)
-        init.constant_(m.bias, 0)
 
 class wide_basic_pruned(nn.Module):
     def __init__(self, in_planes, planes, dropout_rate, stride=1):
@@ -34,9 +26,6 @@ class wide_basic_pruned(nn.Module):
             self.shortcut = nn.Sequential(
                 nn.Conv2d(in_planes, planes, kernel_size=1, stride=stride, bias=True),
             )
-        
-        prune.random_unstructured(self.conv1, 'weight', amount=0.8)
-        prune.random_unstructured(self.conv2, 'weight', amount=0.8)
 
     def forward(self, x):
         out = self.dropout(self.conv1(F.relu(self.bn1(x))))
@@ -64,8 +53,7 @@ class Wide_ResNetPruned(nn.Module):
         self.bn1 = nn.BatchNorm2d(nStages[3], momentum=0.9)
         self.linear = nn.Linear(nStages[3], num_classes)
 
-        prune.random_unstructured(self.conv1, 'weight', amount=0.8)
-        prune.random_unstructured(self.linear, 'weight', amount=0.8)
+        prune.random_unstructured(self.linear, 'weight', amount=0.95)
 
     def _wide_layer(self, block, planes, num_blocks, dropout_rate, stride):
         strides = [stride] + [1]*(int(num_blocks)-1)
@@ -89,11 +77,23 @@ class Wide_ResNetPruned(nn.Module):
 
         return out
 
-    def set_w(self, writer):
+    def update_weights(self, writer):
         pass
+
+    @staticmethod
+    def conv_init(m):
+        classname = m.__class__.__name__
+        if classname.find('Conv') != -1:
+            init.xavier_uniform_(m.weight, gain=np.sqrt(2))
+            init.constant_(m.bias, 0)
+            prune.random_unstructured(m, 'weight', amount=0.95)
+        elif classname.find('BatchNorm') != -1:
+            init.constant_(m.weight, 1)
+            init.constant_(m.bias, 0)
 
 if __name__ == '__main__':
     net=Wide_ResNetPruned(28, 10, 0.3, 10)
+    net.apply(net.conv_init)
     y = net(Variable(torch.randn(1,3,32,32)))
 
     print(y.size())

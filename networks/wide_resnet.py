@@ -10,14 +10,6 @@ import numpy as np
 def conv3x3(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=True)
 
-def conv_init(m):
-    classname = m.__class__.__name__
-    if classname.find('Conv') != -1:
-        init.xavier_uniform_(m.weight, gain=np.sqrt(2))
-        init.constant_(m.bias, 0)
-    elif classname.find('BatchNorm') != -1:
-        init.constant_(m.weight, 1)
-        init.constant_(m.bias, 0)
 
 class wide_basic(nn.Module):
     def __init__(self, in_planes, planes, dropout_rate, stride=1):
@@ -82,11 +74,22 @@ class Wide_ResNet(nn.Module):
 
         return out
 
-    def set_w(self, writer):
+    def update_weights(self, writer):
         pass
+
+    @staticmethod
+    def conv_init(m):
+        classname = m.__class__.__name__
+        if classname.find('Conv') != -1:
+            init.xavier_uniform_(m.weight, gain=np.sqrt(2))
+            init.constant_(m.bias, 0)
+        elif classname.find('BatchNorm') != -1:
+            init.constant_(m.weight, 1)
+            init.constant_(m.bias, 0)
 
 if __name__ == '__main__':
     net=Wide_ResNet(28, 10, 0.3, 10)
+    net.apply(net.conv_init)
     y = net(Variable(torch.randn(1,3,32,32)))
 
     print(y.size())

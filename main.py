@@ -25,7 +25,9 @@ parser.add_argument('--dropout', default=0.3, type=float, help='dropout_rate')
 parser.add_argument('--dataset', default='cifar10', type=str, help='dataset = [cifar10/cifar100]')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
 parser.add_argument('--testOnly', '-t', action='store_true', help='Test mode with the saved model')
-parser.add_argument('--no_logs', action='store_true', help="don't log tensorboard SummaryWriter")
+parser.add_argument('--K', default=0.15, type=float, help='frac of weight updates')
+parser.add_argument('--k-similar', default=1/3, type=float, help='frac of similar weight searched')
+parser.add_argument('--no_logs', action='store_true', help="mark tensorboard SummaryWriter as '-to-delete'")
 parser.add_argument('--comment', help='There you can write any comment you like.')
 args = parser.parse_args()
 
@@ -108,7 +110,7 @@ def getNetwork(args):
         file_name = 'wide-resnet-init2'+str(args.depth)+'x'+str(args.widen_factor)
 
     elif (args.net_type == 'wide-resnet-sim'):
-        net = Wide_ResNet_sim(writer, args.depth, args.widen_factor, args.dropout, num_classes)
+        net = Wide_ResNet_sim(writer, args.depth, args.widen_factor, args.dropout, num_classes, args.K, args.k_similar)
         file_name = 'wide-resnet-sim'+str(args.depth)+'x'+str(args.widen_factor)
 
     else:
@@ -166,7 +168,7 @@ if args.resume:
 else:
     print('| Building net type [' + args.net_type + ']...')
     net, file_name = getNetwork(args)
-    net.apply(conv_init)
+    net.apply(net.conv_init)
 
 if use_cuda:
     net.cuda()
@@ -242,14 +244,14 @@ def test(epoch):
             _, predicted = torch.max(outputs.data, 1)
             total += targets.size(0)
             correct += predicted.eq(targets.data).cpu().sum()
-        try:
-            for conv, log_name in (net.module if use_cuda else net).conv_to_log:
-                writer.add_histogram(log_name, conv.weight, epoch)
-                writer.add_scalar(log_name + " nonzero weights", torch.count_nonzero(conv.weight), epoch)
-                writer.add_scalar(log_name + " weight count", conv.weight.numel(), epoch)
-                writer.add_scalar(log_name + " sparsity", 100 * (1 - torch.count_nonzero(conv.weight) / conv.weight.numel()), epoch)
-        except:
-            pass
+        # try:
+        #     for conv, log_name in (net.module if use_cuda else net).conv_to_log:
+        #         writer.add_histogram(log_name, conv.weight, epoch)
+        #         writer.add_scalar(log_name + " nonzero weights", torch.count_nonzero(conv.weight), epoch)
+        #         writer.add_scalar(log_name + " weight count", conv.weight.numel(), epoch)
+        #         writer.add_scalar(log_name + " sparsity", 100 * (1 - torch.count_nonzero(conv.weight) / conv.weight.numel()), epoch)
+        # except:
+        #     pass
 
         # Save checkpoint when best model
         acc = 100.*correct/total

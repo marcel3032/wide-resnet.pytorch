@@ -2,7 +2,7 @@
 import math
 
 start_epoch = 1
-num_epochs = 200
+num_epochs = 80
 batch_size = 256
 optim_type = 'SGD'
 
