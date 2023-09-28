@@ -158,6 +158,9 @@ def similarity_magic_faiss(x, out, conv, batch_size, log_name, K, k_similar):
     unfold = unfold.mean(axis=2).detach().cpu().numpy().T
     out = out.mean(axis=(2, 3)).detach().cpu().numpy().T
 
+    unfold /= np.linalg.norm(unfold, axis=1).reshape(-1,1)
+    out /= np.linalg.norm(out, axis=1).reshape(-1, 1)
+
     index = faiss.IndexFlatIP(batch_size)
     index.add(unfold)
 
@@ -201,7 +204,7 @@ if __name__ == '__main__':
     from torch.utils.tensorboard import SummaryWriter
 
     writer = SummaryWriter()
-    net = Wide_ResNet_sim(writer, 28, 10, 0.3, 10)
+    net = Wide_ResNet_sim(writer, 28, 10, 0.3, 10, 0.2, 0.25)
     net.apply(net.conv_init)
     y = net(Variable(torch.randn(128, 3, 32, 32)))
 
