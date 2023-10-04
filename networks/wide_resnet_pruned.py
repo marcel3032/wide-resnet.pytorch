@@ -53,7 +53,7 @@ class Wide_ResNetPruned(nn.Module):
         self.bn1 = nn.BatchNorm2d(nStages[3], momentum=0.9)
         self.linear = nn.Linear(nStages[3], num_classes)
 
-        prune.random_unstructured(self.linear, 'weight', amount=0.95)
+        prune.random_unstructured(self.linear, 'weight', amount=0.8)
 
     def _wide_layer(self, block, planes, num_blocks, dropout_rate, stride):
         strides = [stride] + [1]*(int(num_blocks)-1)
@@ -86,7 +86,7 @@ class Wide_ResNetPruned(nn.Module):
         if classname.find('Conv') != -1:
             init.xavier_uniform_(m.weight, gain=np.sqrt(2))
             init.constant_(m.bias, 0)
-            prune.random_unstructured(m, 'weight', amount=0.95)
+            prune.random_unstructured(m, 'weight', amount=0.8)
         elif classname.find('BatchNorm') != -1:
             init.constant_(m.weight, 1)
             init.constant_(m.bias, 0)

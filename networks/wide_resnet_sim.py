@@ -41,7 +41,7 @@ class wide_basic(nn.Module):
         inp = out
         out = self.conv1(out)
         if torch.is_grad_enabled():
-            weight_to_update.append(similarity_magic_faiss(inp, out, self.conv1, out.shape[0], self.name + " self.conv1", self.K, self.k_similar))
+            weight_to_update.append(similarity_magic_faiss_other_way(inp, out, self.conv1, out.shape[0], self.name + " self.conv1", self.K, self.k_similar))
 
         out = self.dropout(out)
         out = F.relu(self.bn2(out))
@@ -49,14 +49,14 @@ class wide_basic(nn.Module):
         inp = out
         out = self.conv2(out)
         if torch.is_grad_enabled():
-            weight_to_update.append(similarity_magic_faiss(inp, out, self.conv2, out.shape[0], self.name + " self.conv2", self.K, self.k_similar))
+            weight_to_update.append(similarity_magic_faiss_other_way(inp, out, self.conv2, out.shape[0], self.name + " self.conv2", self.K, self.k_similar))
 
         out += self.shortcut(x)
         if torch.is_grad_enabled():
             assert len(self.shortcut) in [0, 1]
             if len(self.shortcut) == 1:
                 weight_to_update.append(
-                    similarity_magic_faiss(x, out, self.shortcut[0], out.shape[0], self.name + " self.shortcut", self.K, self.k_similar))
+                    similarity_magic_faiss_other_way(x, out, self.shortcut[0], out.shape[0], self.name + " self.shortcut", self.K, self.k_similar))
 
         return out
 
@@ -101,7 +101,7 @@ class Wide_ResNet_sim(nn.Module):
 
         out = self.conv1(x)
         if torch.is_grad_enabled():
-            weight_to_update.append(similarity_magic_faiss(x, out, self.conv1, batch_size, "self.conv1", self.K, self.k_similar))
+            weight_to_update.append(similarity_magic_faiss_other_way(x, out, self.conv1, batch_size, "self.conv1", self.K, self.k_similar))
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
@@ -118,7 +118,7 @@ class Wide_ResNet_sim(nn.Module):
         with torch.no_grad():
             for conv, to_randn, to_zero, log_name in weight_to_update:
                 conv.weight[to_zero] = 0
-                conv.weight[to_randn] = torch.randn(conv.weight[to_randn].shape).to(device)
+                conv.weight[to_randn] = torch.randn(conv.weight[to_randn].shape).to(device)  # TODO better rand value
                 # self.conv_to_log.add((conv, log_name))
         self.global_step += 1
         writer.flush()
@@ -136,20 +136,20 @@ class Wide_ResNet_sim(nn.Module):
             init.constant_(m.bias, 0)
 
 
+def get_distances(index, conv, out, k, set_inf=True):
+    shape = conv.weight.shape
+    D, I = index.search(out, k)
+    idx = np.array(
+        (np.repeat(np.arange(conv.out_channels), k).reshape(conv.out_channels, k),
+         *np.unravel_index(I, shape[1:]))).reshape(len(shape), -1)
+
+    distances = D.reshape(-1)
+
+    return idx, distances
+
+
 def similarity_magic_faiss(x, out, conv, batch_size, log_name, K, k_similar):
-    def get_distances(index, conv, out, k):
-        shape = conv.weight.shape
-        D, I = index.search(out, k)
-        idx = np.array(
-            (np.repeat(np.arange(conv.out_channels), k).reshape(conv.out_channels, k),
-             *np.unravel_index(I, shape[1:]))).reshape(len(shape), -1)
-        conv_w = conv.weight[idx].detach().cpu().numpy()
-
-        distances = D.reshape(-1)
-        distances[conv_w != 0] = np.inf
-
-        return idx, distances
-
+    # sposob B.
     K = int(conv.weight.numel() * K)
 
     unfold = F.unfold(x, kernel_size=conv.kernel_size, padding=conv.padding, stride=conv.stride)
@@ -158,8 +158,8 @@ def similarity_magic_faiss(x, out, conv, batch_size, log_name, K, k_similar):
     unfold = unfold.mean(axis=2).detach().cpu().numpy().T
     out = out.mean(axis=(2, 3)).detach().cpu().numpy().T
 
-    unfold /= np.linalg.norm(unfold, axis=1).reshape(-1,1)
-    out /= np.linalg.norm(out, axis=1).reshape(-1, 1)
+    # unfold /= np.linalg.norm(unfold, axis=1).reshape(-1, 1)
+    # out /= np.linalg.norm(out, axis=1).reshape(-1, 1)
 
     index = faiss.IndexFlatIP(batch_size)
     index.add(unfold)
@@ -168,14 +168,47 @@ def similarity_magic_faiss(x, out, conv, batch_size, log_name, K, k_similar):
 
     to_rand_idx, to_rand = get_distances(index, conv, out, k_similar)
     to_rand_idx = to_rand_idx.T[np.argpartition(to_rand, K)[:K]]
-    
+
     to_zero_idx, to_zero = get_distances(index, conv, -1 * out, k_similar)
     to_zero_idx = to_zero_idx.T[np.argpartition(to_zero, K)[:K]]
 
     return conv, to_rand_idx.T, to_zero_idx.T, log_name
 
+def similarity_magic_faiss_other_way(x, out, conv, batch_size, log_name, K, k_similar):
+    # sposob A.
+    K = int(conv.weight.numel() * K)
+
+    unfold = F.unfold(x, kernel_size=conv.kernel_size, padding=conv.padding, stride=conv.stride)
+    out_size = conv.in_channels * np.prod(conv.kernel_size)
+
+    unfold = unfold.mean(axis=2).detach().cpu().numpy().T
+    out = out.mean(axis=(2, 3)).detach().cpu().numpy().T
+
+    # unfold /= np.linalg.norm(unfold, axis=1).reshape(-1, 1)
+    # out /= np.linalg.norm(out, axis=1).reshape(-1, 1)
+
+    index = faiss.IndexFlatIP(batch_size)
+    index.add(unfold)
+
+    k_similar = int(out_size * k_similar)
+
+    to_rand_idx, to_rand = get_distances(index, conv, out, k_similar, set_inf=True)
+    to_rand_idx = to_rand_idx.T[np.argpartition(to_rand, K)[:K]]
+
+    nonzero = np.ravel_multi_index(np.nonzero(conv.weight.detach().cpu().numpy()), conv.weight.shape)
+    to_rand_idx = np.ravel_multi_index(to_rand_idx.T, conv.weight.shape)
+
+    # nzero and rand -> bez zmeny
+    # nonzero and not rand -> to_zero
+    # not nonzero and rand -> to_rand
+
+    to_zero_idx = np.unravel_index(np.setdiff1d(nonzero, to_rand_idx, assume_unique=True), conv.weight.shape)
+    to_rand_idx = np.unravel_index(np.setdiff1d(to_rand_idx, nonzero, assume_unique=True), conv.weight.shape)
+    return conv, to_rand_idx, to_zero_idx, log_name
+
 
 def similarity_magic(x, out, conv, batch_size, log_name, K, k_similar):
+    # sposob C.
     def indices_of_smallest(arr, k, conv):
         return np.unravel_index(np.argpartition(arr.reshape(-1), k), conv.weight.shape)
 
