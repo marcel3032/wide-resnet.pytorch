@@ -41,7 +41,7 @@ class wide_basic(nn.Module):
         inp = out
         out = self.conv1(out)
         if torch.is_grad_enabled():
-            weight_to_update.append(similarity_magic_faiss_other_way(inp, out, self.conv1, out.shape[0], self.name + " self.conv1", self.K, self.k_similar))
+            weight_to_update.append(similarity_magic_faiss(inp, out, self.conv1, out.shape[0], self.name + " self.conv1", self.K, self.k_similar))
 
         out = self.dropout(out)
         out = F.relu(self.bn2(out))
@@ -49,14 +49,14 @@ class wide_basic(nn.Module):
         inp = out
         out = self.conv2(out)
         if torch.is_grad_enabled():
-            weight_to_update.append(similarity_magic_faiss_other_way(inp, out, self.conv2, out.shape[0], self.name + " self.conv2", self.K, self.k_similar))
+            weight_to_update.append(similarity_magic_faiss(inp, out, self.conv2, out.shape[0], self.name + " self.conv2", self.K, self.k_similar))
 
         out += self.shortcut(x)
         if torch.is_grad_enabled():
             assert len(self.shortcut) in [0, 1]
             if len(self.shortcut) == 1:
                 weight_to_update.append(
-                    similarity_magic_faiss_other_way(x, out, self.shortcut[0], out.shape[0], self.name + " self.shortcut", self.K, self.k_similar))
+                    similarity_magic_faiss(x, out, self.shortcut[0], out.shape[0], self.name + " self.shortcut", self.K, self.k_similar))
 
         return out
 
@@ -101,7 +101,7 @@ class Wide_ResNet_sim(nn.Module):
 
         out = self.conv1(x)
         if torch.is_grad_enabled():
-            weight_to_update.append(similarity_magic_faiss_other_way(x, out, self.conv1, batch_size, "self.conv1", self.K, self.k_similar))
+            weight_to_update.append(similarity_magic_faiss(x, out, self.conv1, batch_size, "self.conv1", self.K, self.k_similar))
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
@@ -118,7 +118,9 @@ class Wide_ResNet_sim(nn.Module):
         with torch.no_grad():
             for conv, to_randn, to_zero, log_name in weight_to_update:
                 conv.weight[to_zero] = 0
-                conv.weight[to_randn] = torch.randn(conv.weight[to_randn].shape).to(device)  # TODO better rand value
+                conv.weight_mask[to_zero] = 0
+                conv.weight[to_randn] = 0  # TODO better rand value
+                conv.weight_mask[to_randn] = 1
                 # self.conv_to_log.add((conv, log_name))
         self.global_step += 1
         writer.flush()
@@ -176,7 +178,7 @@ def similarity_magic_faiss(x, out, conv, batch_size, log_name, K, k_similar):
 
 def similarity_magic_faiss_other_way(x, out, conv, batch_size, log_name, K, k_similar):
     # sposob A.
-    K = int(conv.weight.numel() * K)
+    K = int(conv.weight_mask.sum().item())
 
     unfold = F.unfold(x, kernel_size=conv.kernel_size, padding=conv.padding, stride=conv.stride)
     out_size = conv.in_channels * np.prod(conv.kernel_size)
@@ -195,7 +197,7 @@ def similarity_magic_faiss_other_way(x, out, conv, batch_size, log_name, K, k_si
     to_rand_idx, to_rand = get_distances(index, conv, out, k_similar, set_inf=True)
     to_rand_idx = to_rand_idx.T[np.argpartition(to_rand, K)[:K]]
 
-    nonzero = np.ravel_multi_index(np.nonzero(conv.weight.detach().cpu().numpy()), conv.weight.shape)
+    nonzero = np.ravel_multi_index(np.nonzero(conv.weight_mask.detach().cpu().numpy()), conv.weight_mask.shape)
     to_rand_idx = np.ravel_multi_index(to_rand_idx.T, conv.weight.shape)
 
     # nzero and rand -> bez zmeny
