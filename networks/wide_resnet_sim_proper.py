@@ -107,7 +107,7 @@ class Wide_ResNet_sim_proper(nn.Module):
     def update_weights_in_module(self, m):
         classname = m.__class__.__name__
         if classname.find('Conv') != -1:
-            weight_magic(m, self.K, self.k_similar)
+            weight_magic_faiss(m, self.K, self.k_similar)
 
     @staticmethod
     def conv_init(m):
@@ -153,7 +153,7 @@ def weight_magic_faiss(conv, K, k_similar):
     # unfold /= np.linalg.norm(unfold, axis=1).reshape(-1, 1)
     # out /= np.linalg.norm(out, axis=1).reshape(-1, 1)
 
-    index = faiss.IndexFlatIP(batch_size)
+    index = faiss.IndexFlatL2(batch_size)
     index.add(unfold)
 
     k_similar = int(out_size * k_similar)
