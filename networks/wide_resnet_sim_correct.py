@@ -53,9 +53,9 @@ class wide_basic_proper(nn.Module):
         return out + self.shortcut(x)
 
 
-class Wide_ResNet_sim_proper(nn.Module):
+class Wide_ResNet_sim_correct(nn.Module):
     def __init__(self, writer: SummaryWriter, depth, widen_factor, dropout_rate, num_classes, K, k_similar):
-        super(Wide_ResNet_sim_proper, self).__init__()
+        super(Wide_ResNet_sim_correct, self).__init__()
         self.global_step = 0
         self.in_planes = 16
         self.conv_to_log = set()
@@ -210,7 +210,7 @@ if __name__ == '__main__':
     from torch.utils.tensorboard import SummaryWriter
 
     writer = SummaryWriter()
-    net = Wide_ResNet_sim_proper(writer, 28, 5, 0.3, 10, 0.2, 0.25)
+    net = Wide_ResNet_sim_correct(writer, 28, 5, 0.3, 10, 0.2, 0.25)
     net.apply(net.conv_init)
 
     y = net(Variable(torch.randn(128, 3, 32, 32)))

@@ -113,8 +113,8 @@ def getNetwork(args):
         net = Wide_ResNet_sim(writer, args.depth, args.widen_factor, args.dropout, num_classes, args.K, args.k_similar)
         file_name = 'wide-resnet-sim'+str(args.depth)+'x'+str(args.widen_factor)
 
-    elif (args.net_type == 'wide-resnet-sim-proper'):
-        net = Wide_ResNet_sim_proper(writer, args.depth, args.widen_factor, args.dropout, num_classes, args.K, args.k_similar)
+    elif (args.net_type == 'wide-resnet-sim-correct'):
+        net = Wide_ResNet_sim_correct(writer, args.depth, args.widen_factor, args.dropout, num_classes, args.K, args.k_similar)
         file_name = 'wide-resnet-sim-proper'+str(args.depth)+'x'+str(args.widen_factor)
 
     else:
