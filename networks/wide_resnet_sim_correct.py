@@ -133,7 +133,7 @@ def get_distances(index, conv, out, k, set_inf=True):
 
     distances = D.reshape(-1)
 
-    return idx, distances
+    return idx, np.abs(distances)
 
 
 def weight_magic_faiss(conv, K, k_similar):
@@ -153,7 +153,7 @@ def weight_magic_faiss(conv, K, k_similar):
     # unfold /= np.linalg.norm(unfold, axis=1).reshape(-1, 1)
     # out /= np.linalg.norm(out, axis=1).reshape(-1, 1)
 
-    index = faiss.IndexFlatL2(batch_size)
+    index = faiss.IndexFlatIP(batch_size)
     index.add(unfold)
 
     k_similar = int(out_size * k_similar)
