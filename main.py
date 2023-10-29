@@ -16,6 +16,19 @@ import torch
 import config as cf
 from networks import *
 
+
+deterministic = False
+
+if deterministic:
+    # deterministic behaviour
+    import torch
+    torch.manual_seed(0)
+    import random
+    random.seed(0)
+    import numpy as np
+    np.random.seed(0)
+    torch.use_deterministic_algorithms(True)
+
 parser = argparse.ArgumentParser(description='PyTorch CIFAR-10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning_rate')
 parser.add_argument('--net_type', default='wide-resnet', type=str, help='model')
@@ -69,7 +82,20 @@ elif(args.dataset == 'cifar100'):
     testset = torchvision.datasets.CIFAR100(root='./data', train=False, download=False, transform=transform_test)
     num_classes = 100
 
-trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=2)
+if deterministic:
+    def seed_worker(worker_id):
+        worker_seed = torch.initial_seed() % 2 ** 32
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+
+
+    g = torch.Generator()
+    g.manual_seed(0)
+
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=False, num_workers=2,
+                                              worker_init_fn=seed_worker, generator=g)
+else:
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=2)
 testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
 
 # Return network & file name
@@ -86,14 +112,14 @@ def getNetwork(args):
     elif (args.net_type == 'wide-resnet'):
         net = Wide_ResNet(args.depth, args.widen_factor, args.dropout, num_classes)
         file_name = 'wide-resnet-'+str(args.depth)+'x'+str(args.widen_factor)
-        
+
     elif (args.net_type == 'wide-resnet-pruned'):
         net = Wide_ResNetPruned(args.depth, args.widen_factor, args.dropout, num_classes)
         file_name = 'wide-resnet-pruned-'+str(args.depth)+'x'+str(args.widen_factor)
     elif (args.net_type == 'wide-resnet-pruned-global'):
         net = Wide_ResNetPrunedGlobal(args.depth, args.widen_factor, args.dropout, num_classes)
         file_name = 'wide-resnet-pruned-global'+str(args.depth)+'x'+str(args.widen_factor)
-        
+
     elif (args.net_type == 'wide-resnet-l1-pruned'):
         net = Wide_ResNetL1Pruned(args.depth, args.widen_factor, args.dropout, num_classes)
         file_name = 'wide-resnet-l1-pruned-'+str(args.depth)+'x'+str(args.widen_factor)
@@ -202,11 +228,6 @@ def train(epoch):
         optimizer.step() # Optimizer update
 
 
-        if isinstance(net, torch.nn.DataParallel):
-            net.module.update_weights(writer)
-        else:
-            net.update_weights(writer)
-
         train_loss += loss.item()
         _, predicted = torch.max(outputs.data, 1)
         total += targets.size(0)
@@ -224,6 +245,12 @@ def train(epoch):
                 %(epoch, num_epochs, batch_idx+1,
                     (len(trainset)//batch_size)+1, loss.item(), acc))
         sys.stdout.flush()
+
+        with torch.no_grad():
+            if isinstance(net, torch.nn.DataParallel):
+                net.module.update_weights(writer)
+            else:
+                net.update_weights(writer)
 
     writer.add_scalar("loss by epoch", loss.item(), epoch, new_style=True)
     writer.add_scalar("acc by epoch", acc, epoch, new_style=True)
