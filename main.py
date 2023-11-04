@@ -246,11 +246,11 @@ def train(epoch):
                     (len(trainset)//batch_size)+1, loss.item(), acc))
         sys.stdout.flush()
 
-        with torch.no_grad():
-            if isinstance(net, torch.nn.DataParallel):
-                net.module.update_weights(writer)
-            else:
-                net.update_weights(writer)
+    with torch.no_grad():
+        if isinstance(net, torch.nn.DataParallel):
+            net.module.update_weights(writer)
+        else:
+            net.update_weights(writer)
 
     writer.add_scalar("loss by epoch", loss.item(), epoch, new_style=True)
     writer.add_scalar("acc by epoch", acc, epoch, new_style=True)

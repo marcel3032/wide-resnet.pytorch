@@ -113,10 +113,22 @@ class Wide_ResNet_sim_correct(nn.Module):
 
     def update_weights(self, writer: SummaryWriter):
         self.apply(self.update_weights_in_module)
+        # self.apply(lambda m : self.log(m, writer))
+    
+    def log(self, m, writer):
+        classname = m.__class__.__name__
+        if classname.find('Conv') != -1:
+            import time
+            writer.add_scalar(classname, torch.count_nonzero(m.weight)/torch.numel(m.weight), int(time.time()))
+            writer.add_scalar(classname+" mask", torch.count_nonzero(m.weight_mask)/torch.numel(m.weight_mask), int(time.time()))
 
     def update_weights_in_module(self, m):
         classname = m.__class__.__name__
         if classname.find('Conv') != -1:
+            # import time
+            # self.writer.add_scalar(classname, torch.count_nonzero(m.weight)/torch.numel(m.weight), int(time.time()))
+            # self.writer.add_scalar(classname+" mask", torch.count_nonzero(m.weight_mask)/torch.numel(m.weight_mask), int(time.time()))
+            remove_smallest_weights(m, self.K)
             weight_magic(m, self.K, self.k_similar)
 
     @staticmethod
@@ -133,6 +145,14 @@ class Wide_ResNet_sim_correct(nn.Module):
             init.constant_(m.weight, 1)
             init.constant_(m.bias, 0)
 
+
+def remove_smallest_weights(conv, K):
+    K = int(conv.weight.numel() * K)
+    weights = np.abs(conv.weight.detach().cpu().numpy().reshape(-1))
+    weights[conv.weight_mask.detach().cpu().numpy().reshape(-1) == 0] = np.inf
+    indices = np.unravel_index(np.argpartition(weights, K)[:K], conv.weight.shape)
+    conv.weight[indices] = 0
+    conv.weight_mask[indices] = 0
 
 def get_distances(index, conv, out, k):
     shape = conv.weight.shape
@@ -168,31 +188,23 @@ def weight_magic_faiss(conv, K, k_similar):
     index.add(unfold)
 
     k_similar = int(out_size * k_similar)
-    zero_weights_tensor = np.ravel_multi_index((1 - conv.weight_mask).nonzero().detach().cpu().numpy().T, conv.weight_mask.shape)
-    nonzero_weights_tensor = np.ravel_multi_index(conv.weight_mask.nonzero().detach().cpu().numpy().T, conv.weight_mask.shape)
 
     to_rand_idx, to_rand = get_distances(index, conv, out, k_similar)
-    to_rand_idx = np.ravel_multi_index(to_rand_idx, conv.weight_mask.shape)
-    intersection = np.in1d(to_rand_idx, zero_weights_tensor)
-    to_rand_idx = to_rand_idx[intersection]
-    to_rand_idx = np.array(np.unravel_index(to_rand_idx, conv.weight_mask.shape))
-    to_rand = to_rand[intersection]
-    to_rand_idx = to_rand_idx.T[np.argpartition(to_rand, K)[:K]]
+    to_rand = np.abs(to_rand)
+    to_rand[conv.weight_mask[to_rand_idx].detach().cpu().numpy() == 1] = -np.inf
+    to_rand_idx = to_rand_idx.T[np.argpartition(to_rand, -K)[-K:]]
+    to_randn = to_rand_idx.T
 
-    to_zero_idx, to_zero = get_distances(index, conv, -1 * out, k_similar)
-    to_zero_idx = np.ravel_multi_index(to_zero_idx, conv.weight_mask.shape)
-    intersection = np.in1d(to_zero_idx, nonzero_weights_tensor)
-    to_zero_idx = to_zero_idx[intersection]
-    to_zero_idx = np.array(np.unravel_index(to_zero_idx, conv.weight_mask.shape))
-    to_zero = to_zero[intersection]
-    to_zero_idx = to_zero_idx.T[np.argpartition(to_zero, K)[:K]]
-
-    to_randn, to_zero = to_rand_idx.T, to_zero_idx.T
-
-    conv.weight[to_zero] = 0
-    conv.weight_mask[to_zero] = 0
     conv.weight[to_randn] = 0
     conv.weight_mask[to_randn] = 1
+
+    # to_zero_idx, to_zero = get_distances(index, conv, -1 * out, k_similar)
+    # to_zero[conv.weight_mask[to_zero_idx].detach().cpu().numpy() == 0] = np.inf
+    # to_zero_idx = to_zero_idx.T[np.argpartition(to_zero, K)[:K]]
+    # to_zero = to_zero_idx.T
+    #
+    # conv.weight[to_zero] = 0
+    # conv.weight_mask[to_zero] = 0
 
 
 def weight_magic(conv, K, k_similar):
@@ -208,6 +220,11 @@ def weight_magic(conv, K, k_similar):
         else:
             return np.unravel_index(np.argpartition(arr.reshape(-1), k)[k:], conv.weight.shape)
 
+    def dist(X, Y):
+        sx = np.sum(X ** 2, axis=1, keepdims=True)
+        sy = np.sum(Y ** 2, axis=1, keepdims=True)
+        return -2 * X.dot(Y.T) + sx + sy.T
+
     K = int(conv.weight.numel() * K)
 
     unfold = F.unfold(x, kernel_size=conv.kernel_size, padding=conv.padding, stride=conv.stride)
@@ -216,20 +233,25 @@ def weight_magic(conv, K, k_similar):
     unfold = unfold.mean(axis=2).detach().cpu().numpy().T
     out = out.mean(axis=(2, 3)).detach().cpu().numpy().T
 
+    weight_mask = conv.weight_mask.reshape(conv.out_channels, out_size).detach().cpu().numpy()
+
     distances = out.dot(unfold.T)
 
-    nonzero_weights_tensor = conv.weight_mask.reshape(conv.out_channels, out_size).int().detach().cpu().numpy()
+    max_distances = np.abs(distances)
+    max_distances[weight_mask == 1] = -np.inf
+    to_randn = indices_of_smallest(max_distances, -K, conv)
 
-    max_distances = distances * (1 - nonzero_weights_tensor)
-    to_randn = indices_of_smallest(max_distances, K, conv)
-
-    min_distances = distances * nonzero_weights_tensor
-    to_zero = indices_of_smallest(min_distances, -K, conv)
-
-    conv.weight[to_zero] = 0
-    conv.weight_mask[to_zero] = 0
     conv.weight[to_randn] = 0
     conv.weight_mask[to_randn] = 1
+
+    # distances = dist(-out, unfold)
+    #
+    # min_distances = distances.copy()
+    # min_distances[weight_mask == 0] = np.inf
+    # to_zero = indices_of_smallest(min_distances, K, conv)
+    #
+    # conv.weight[to_zero] = 0
+    # conv.weight_mask[to_zero] = 0
 
 
 if __name__ == '__main__':
