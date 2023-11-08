@@ -129,7 +129,7 @@ class Wide_ResNet_sim_correct(nn.Module):
             # self.writer.add_scalar(classname, torch.count_nonzero(m.weight)/torch.numel(m.weight), int(time.time()))
             # self.writer.add_scalar(classname+" mask", torch.count_nonzero(m.weight_mask)/torch.numel(m.weight_mask), int(time.time()))
             remove_smallest_weights(m, self.K)
-            weight_magic(m, self.K, self.k_similar)
+            weight_magic_random(m, self.K, self.k_similar)
 
     @staticmethod
     def conv_init(m):
@@ -156,6 +156,7 @@ def remove_smallest_weights(conv, K):
 
 def get_distances(index, conv, out, k):
     shape = conv.weight.shape
+    # index.nprobe = 8
     D, I = index.search(out, k)
     idx = np.array(
         (np.repeat(np.arange(conv.out_channels), k).reshape(conv.out_channels, k),
@@ -183,8 +184,14 @@ def weight_magic_faiss(conv, K, k_similar):
 
     # unfold /= np.linalg.norm(unfold, axis=1).reshape(-1, 1)
     # out /= np.linalg.norm(out, axis=1).reshape(-1, 1)
-
+    # print(len(unfold))
+    # if len(unfold)>5000:
+    #     quantizer = faiss.IndexFlatIP(batch_size)
+    #     index = faiss.IndexIVFFlat(quantizer, batch_size, int(len(unfold)**0.25))
+    #     index.train(unfold)
+    # else:
     index = faiss.IndexFlatIP(batch_size)
+
     index.add(unfold)
 
     k_similar = int(out_size * k_similar)
@@ -205,6 +212,19 @@ def weight_magic_faiss(conv, K, k_similar):
     #
     # conv.weight[to_zero] = 0
     # conv.weight_mask[to_zero] = 0
+
+def weight_magic_random(conv, K, k_similar):
+    delattr(conv, "input")
+    delattr(conv, "grad_output")
+
+    K = int(conv.weight.numel() * K)
+
+    indices = torch.nonzero(torch.where(conv.weight_mask == 0, 0, 1))
+    p = torch.ones(indices.shape[0], device=device)
+    to_randn = tuple(indices[p.multinomial(K, False)].T)
+
+    conv.weight[to_randn] = 0
+    conv.weight_mask[to_randn] = 1
 
 
 def weight_magic(conv, K, k_similar):
