@@ -38,9 +38,12 @@ parser.add_argument('--dropout', default=0.3, type=float, help='dropout_rate')
 parser.add_argument('--dataset', default='cifar10', type=str, help='dataset = [cifar10/cifar100]')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
 parser.add_argument('--testOnly', '-t', action='store_true', help='Test mode with the saved model')
-parser.add_argument('--K', default=0.15, type=float, help='frac of weight updates')
-parser.add_argument('--k-similar', default=1/3, type=float, help='frac of similar weight searched')
+parser.add_argument('--dt', default=1, type=int, help='how many steps between weight update')
+parser.add_argument('--K', default=2, type=float, help='frac of weight updates')
+parser.add_argument('--k-similar', default=0, type=float, help='frac of similar weight searched')
+parser.add_argument('--bits', default=0, type=float, help='bits per input')
 parser.add_argument('--no_logs', action='store_true', help="mark tensorboard SummaryWriter as '-to-delete'")
+parser.add_argument('--connection-update', help='what connection update we are going to use [faiss/bruteforce/random]')
 parser.add_argument('--comment', help='There you can write any comment you like.')
 args = parser.parse_args()
 
@@ -140,8 +143,8 @@ def getNetwork(args):
         file_name = 'wide-resnet-sim'+str(args.depth)+'x'+str(args.widen_factor)
 
     elif (args.net_type == 'wide-resnet-sim-correct'):
-        net = Wide_ResNet_sim_correct(writer, args.depth, args.widen_factor, args.dropout, num_classes, args.K, args.k_similar)
-        file_name = 'wide-resnet-sim-proper'+str(args.depth)+'x'+str(args.widen_factor)
+        net = Wide_ResNet_sim_correct(writer, args.depth, args.widen_factor, args.dropout, num_classes, args.K, args.k_similar, args.connection_update, args.bits)
+        file_name = 'wide-resnet-sim-correct'+str(args.depth)+'x'+str(args.widen_factor)
 
     else:
         print('Error : Network should be either [LeNet / VGGNet / ResNet / Wide_ResNet [pruned] / Wide_ResNet L1 [pruned]')
@@ -246,11 +249,13 @@ def train(epoch):
                     (len(trainset)//batch_size)+1, loss.item(), acc))
         sys.stdout.flush()
 
-    with torch.no_grad():
-        if isinstance(net, torch.nn.DataParallel):
-            net.module.update_weights(writer)
-        else:
-            net.update_weights(writer)
+        if ((epoch-1)*len(trainloader)+batch_idx+1) % args.dt == 0:
+            # print("update")
+            with torch.no_grad():
+                if isinstance(net, torch.nn.DataParallel):
+                    net.module.update_weights(writer)
+                else:
+                    net.update_weights(writer)
 
     writer.add_scalar("loss by epoch", loss.item(), epoch, new_style=True)
     writer.add_scalar("acc by epoch", acc, epoch, new_style=True)
