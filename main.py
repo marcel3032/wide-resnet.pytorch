@@ -42,6 +42,8 @@ parser.add_argument('--dt', default=1, type=int, help='how many steps between we
 parser.add_argument('--K', default=2, type=float, help='frac of weight updates')
 parser.add_argument('--k-similar', default=0, type=float, help='frac of similar weight searched')
 parser.add_argument('--bits', default=0, type=float, help='bits per input')
+parser.add_argument('--M', default=0, type=int, help='parameter M of IndexPQ')
+parser.add_argument('--stop_epoch', default=10*cf.num_epochs, type=int, help='last epoch with connection update')
 parser.add_argument('--no_logs', action='store_true', help="mark tensorboard SummaryWriter as '-to-delete'")
 parser.add_argument('--connection-update', help='what connection update we are going to use [faiss/bruteforce/random]')
 parser.add_argument('--comment', help='There you can write any comment you like.')
@@ -143,7 +145,7 @@ def getNetwork(args):
         file_name = 'wide-resnet-sim'+str(args.depth)+'x'+str(args.widen_factor)
 
     elif (args.net_type == 'wide-resnet-sim-correct'):
-        net = Wide_ResNet_sim_correct(writer, args.depth, args.widen_factor, args.dropout, num_classes, args.K, args.k_similar, args.connection_update, args.bits)
+        net = Wide_ResNet_sim_correct(writer, args.depth, args.widen_factor, args.dropout, num_classes, args.K, args.k_similar, args.connection_update, args.bits, args.M)
         file_name = 'wide-resnet-sim-correct'+str(args.depth)+'x'+str(args.widen_factor)
 
     else:
@@ -250,12 +252,16 @@ def train(epoch):
         sys.stdout.flush()
 
         if ((epoch-1)*len(trainloader)+batch_idx+1) % args.dt == 0:
-            # print("update")
-            with torch.no_grad():
-                if isinstance(net, torch.nn.DataParallel):
-                    net.module.update_weights(writer)
-                else:
-                    net.update_weights(writer)
+            if epoch <= args.stop_epoch:
+                # print("update")
+                with torch.no_grad():
+                    if isinstance(net, torch.nn.DataParallel):
+                        net.module.update_weights(writer)
+                    else:
+                        net.update_weights(writer)
+            else:
+                # print("after stop_epoch")
+                pass
 
     writer.add_scalar("loss by epoch", loss.item(), epoch, new_style=True)
     writer.add_scalar("acc by epoch", acc, epoch, new_style=True)

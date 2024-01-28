@@ -23,7 +23,7 @@ def _backward_hook(module, grad_output):
         if not hasattr(module, "grad_output"):
             module.grad_output = torch.zeros([cf.batch_size] + list(grad_output[0].shape)[1:], device=device)
         if module.grad_output.shape[0] == grad_output[0].shape[0]:
-            module.grad_output += grad_output[0]
+            module.grad_output = grad_output[0]
 
 
 def _forward_hook(module, input, output):
@@ -31,7 +31,7 @@ def _forward_hook(module, input, output):
         if not hasattr(module, "input"):
             module.input = torch.zeros([cf.batch_size] + list(input[0].shape)[1:], device=device)
         if module.input.shape[0] == input[0].shape[0]:
-            module.input += input[0]
+            module.input = input[0]
 
 
 class wide_basic_correct(nn.Module):
@@ -63,13 +63,14 @@ class wide_basic_correct(nn.Module):
 
 
 class Wide_ResNet_sim_correct(nn.Module):
-    def __init__(self, writer: SummaryWriter, depth, widen_factor, dropout_rate, num_classes, K, k_similar, update_method, bits: int):
+    def __init__(self, writer: SummaryWriter, depth, widen_factor, dropout_rate, num_classes, K, k_similar, update_method, bits: int, M: int):
         super(Wide_ResNet_sim_correct, self).__init__()
         self.global_step = 0
         self.in_planes = 16
         self.conv_to_log = set()
         self.update_method = update_method
         self.bits = bits
+        self.M = M
 
         assert ((depth - 4) % 6 == 0), 'Wide-resnet depth should be 6n+4'
         n = (depth - 4) / 6
@@ -131,7 +132,7 @@ class Wide_ResNet_sim_correct(nn.Module):
             # print(torch.count_nonzero(m.weight_mask)/torch.numel(m.weight_mask), int(time.time()))
             remove_smallest_weights(m, self.K)
             if self.update_method == 'faiss':
-                weight_magic_faiss(m, self.K, self.k_similar, self.bits)
+                weight_magic_faiss(m, self.K, self.k_similar, self.bits, self.M)
             elif self.update_method == 'random':
                 weight_magic_random(m, self.K, self.k_similar)
             elif self.update_method == 'bruteforce':
@@ -176,7 +177,7 @@ def get_distances(index, conv, out, k):
     return idx, distances
 
 
-def weight_magic_faiss(conv, K, k_similar, bits):
+def weight_magic_faiss(conv, K, k_similar, bits, M):
     # print("faiss")
     x = conv.input
     batch_size = x.shape[0]
@@ -201,16 +202,18 @@ def weight_magic_faiss(conv, K, k_similar, bits):
     #     index = faiss.IndexLSH(quantizer, batch_size, int(len(unfold)**0.25))
     #     index.train(unfold)
     # else:
+    # index = faiss.IndexLSH(batch_size, int(bits*batch_size))
     index = faiss.IndexLSH(batch_size, int(bits*batch_size))
 
+    index.train(unfold)
     index.add(unfold)
 
     k_similar = int(out_size * k_similar)
 
     to_rand_idx, to_rand = get_distances(index, conv, out, k_similar)
     to_rand = np.abs(to_rand)
-    to_rand[conv.weight_mask[to_rand_idx].detach().cpu().numpy() == 1] = -np.inf
-    to_rand_idx = to_rand_idx.T[np.argpartition(to_rand, -K)[-K:]]
+    to_rand[conv.weight_mask[to_rand_idx].detach().cpu().numpy() == 1] = np.inf
+    to_rand_idx = to_rand_idx.T[np.argpartition(to_rand, K)[:K]]
     to_randn = to_rand_idx.T
 
     conv.weight[to_randn] = 0
