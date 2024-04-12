@@ -35,9 +35,11 @@ class wide_basic_pruned(nn.Module):
         return out
 
 class Wide_ResNetPruned(nn.Module):
-    def __init__(self, depth, widen_factor, dropout_rate, num_classes):
+    sparsity = 0
+    def __init__(self, depth, widen_factor, dropout_rate, num_classes, sparsity):
         super(Wide_ResNetPruned, self).__init__()
         self.in_planes = 16
+        self.sparsity = sparsity
 
         assert ((depth-4)%6 ==0), 'Wide-resnet depth should be 6n+4'
         n = (depth-4)/6
@@ -54,6 +56,9 @@ class Wide_ResNetPruned(nn.Module):
         self.linear = nn.Linear(nStages[3], num_classes)
 
         prune.random_unstructured(self.linear, 'weight', amount=0.8)
+
+    def log(self, m, writer):
+        pass
 
     def _wide_layer(self, block, planes, num_blocks, dropout_rate, stride):
         strides = [stride] + [1]*(int(num_blocks)-1)
@@ -80,13 +85,21 @@ class Wide_ResNetPruned(nn.Module):
     def update_weights(self, writer):
         pass
 
+    def log(self, m, writer):
+        classname = m.__class__.__name__
+        if classname.find('Conv') != -1:
+            import time
+            writer.add_scalar(classname, torch.count_nonzero(m.weight) / torch.numel(m.weight), int(time.time()*1000))
+            writer.add_scalar(classname + " mask", torch.count_nonzero(m.weight_mask) / torch.numel(m.weight_mask), int(time.time()*1000))
+
+
     @staticmethod
     def conv_init(m):
         classname = m.__class__.__name__
         if classname.find('Conv') != -1:
             init.xavier_uniform_(m.weight, gain=np.sqrt(2))
             init.constant_(m.bias, 0)
-            prune.random_unstructured(m, 'weight', amount=0.8)
+            prune.random_unstructured(m, 'weight', amount=Wide_ResNetPruned.sparsity)
         elif classname.find('BatchNorm') != -1:
             init.constant_(m.weight, 1)
             init.constant_(m.bias, 0)

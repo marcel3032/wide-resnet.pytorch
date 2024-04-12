@@ -8,17 +8,10 @@ from torch.nn.utils import prune
 import sys
 import numpy as np
 
+parameters_to_prune = []
+
 def conv3x3(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=True)
-
-def conv_init(m):
-    classname = m.__class__.__name__
-    if classname.find('Conv') != -1:
-        init.xavier_uniform_(m.weight, gain=np.sqrt(2))
-        init.constant_(m.bias, 0)
-    elif classname.find('BatchNorm') != -1:
-        init.constant_(m.weight, 1)
-        init.constant_(m.bias, 0)
 
 class wide_basic_l1_pruned_global(nn.Module):
     def __init__(self, in_planes, planes, dropout_rate, stride=1):
@@ -49,9 +42,11 @@ class wide_basic_l1_pruned_global(nn.Module):
         ]
 
 class Wide_ResNetL1PrunedGlobal(nn.Module):
-    def __init__(self, depth, widen_factor, dropout_rate, num_classes):
+    
+    def __init__(self, depth, widen_factor, dropout_rate, num_classes, sparsity):
         super(Wide_ResNetL1PrunedGlobal, self).__init__()
         self.in_planes = 16
+        self.sparsity = sparsity
 
         assert ((depth-4)%6 ==0), 'Wide-resnet depth should be 6n+4'
         n = (depth-4)/6
@@ -67,19 +62,27 @@ class Wide_ResNetL1PrunedGlobal(nn.Module):
         self.bn1 = nn.BatchNorm2d(nStages[3], momentum=0.9)
         self.linear = nn.Linear(nStages[3], num_classes)
 
-        parameters_to_prune = [
-          (self.conv1, 'weight'),
-          (self.linear, 'weight'),
-          *prune1,
-          *prune2,
-          *prune3,
-        ]
+        parameters_to_prune.append((self.linear, 'weight'))
 
+        self.apply(self.add_conv_to_parameters_to_prune)
+
+        self.prune()
+
+    def prune(self):
         prune.global_unstructured(
           parameters_to_prune,
           pruning_method=prune.L1Unstructured,
-          amount=0.8,
+          amount=self.sparsity,
         )
+
+    @staticmethod
+    def add_conv_to_parameters_to_prune(m):
+        classname = m.__class__.__name__
+        if classname.find('Conv') != -1:
+            parameters_to_prune.append((m, 'weight'))
+
+    def log(self, m, writer):
+        pass
 
     def _wide_layer(self, block, planes, num_blocks, dropout_rate, stride):
         prune = []
@@ -104,6 +107,21 @@ class Wide_ResNetL1PrunedGlobal(nn.Module):
         out = self.linear(out)
 
         return out
+
+    @staticmethod
+    def conv_init(m):
+        classname = m.__class__.__name__
+        if classname.find('Conv') != -1:
+            init.xavier_uniform_(m.weight, gain=np.sqrt(2))
+            init.constant_(m.bias, 0)
+            # parameters_to_prune.append((m, 'weight'))
+        elif classname.find('BatchNorm') != -1:
+            init.constant_(m.weight, 1)
+            init.constant_(m.bias, 0)
+
+    def update_weights(self, w):
+        pass
+
 
 if __name__ == '__main__':
     net=Wide_ResNetL1PrunedGlobal(28, 10, 0.3, 10)

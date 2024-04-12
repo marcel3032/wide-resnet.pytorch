@@ -4,7 +4,7 @@ import torch.nn.init as init
 import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.nn.utils import prune
-# import config as cf
+import config as cf
 
 import sys
 import numpy as np
@@ -21,8 +21,7 @@ def conv3x3(in_planes, out_planes, stride=1):
 def _backward_hook(module, grad_output):
     with torch.no_grad():
         if not hasattr(module, "grad_output"):
-            # FIXME
-            module.grad_output = torch.zeros([128] + list(grad_output[0].shape)[1:], device=device)
+            module.grad_output = torch.zeros([cf.batch_size] + list(grad_output[0].shape)[1:], device=device)
         if module.grad_output.shape[0] == grad_output[0].shape[0]:
             module.grad_output = grad_output[0]
 
@@ -30,8 +29,7 @@ def _backward_hook(module, grad_output):
 def _forward_hook(module, input, output):
     with torch.no_grad():
         if not hasattr(module, "input"):
-            # FIXME
-            module.input = torch.zeros([128] + list(input[0].shape)[1:], device=device)
+            module.input = torch.zeros([cf.batch_size] + list(input[0].shape)[1:], device=device)
         if module.input.shape[0] == input[0].shape[0]:
             module.input = input[0]
 
@@ -63,9 +61,16 @@ class wide_basic_correct(nn.Module):
 
         return out + self.shortcut(x)
 
+    def get_prunable_params(self):
+        return [
+          (self.conv1, 'weight'),
+          (self.conv2, 'weight')
+        ]
 
-class Wide_ResNet_sim_correct(nn.Module):
+
+class Wide_ResNet_sim_correct_l1(nn.Module):
     sparsity = 0
+
     def __init__(self, writer: SummaryWriter, depth, widen_factor, dropout_rate, num_classes, K, k_similar, update_method, bits: int, M: int, sparsity: float):
         super(Wide_ResNet_sim_correct, self).__init__()
         self.global_step = 0
@@ -92,7 +97,26 @@ class Wide_ResNet_sim_correct(nn.Module):
         self.K = K
         self.k_similar = k_similar
 
-        prune.random_unstructured(self.linear, 'weight', amount=sparsity)
+        parameters_to_prune.append((self.linear, 'weight'))
+
+        self.apply(self.add_conv_to_parameters_to_prune)
+
+        self.prune()
+
+        # prune.random_unstructured(self.linear, 'weight', amount=sparsity)
+
+    def prune(self):
+        prune.global_unstructured(
+          parameters_to_prune,
+          pruning_method=prune.L1Unstructured,
+          amount=self.sparsity,
+        )
+
+    @staticmethod
+    def add_conv_to_parameters_to_prune(m):
+        classname = m.__class__.__name__
+        if classname.find('Conv') != -1:
+            parameters_to_prune.append((m, 'weight'))
 
     def _wide_layer(self, block, planes, num_blocks, dropout_rate, stride, K, k_similar, name):
         strides = [stride] + [1] * (int(num_blocks) - 1)
@@ -150,7 +174,7 @@ class Wide_ResNet_sim_correct(nn.Module):
         if classname.find('Conv') != -1:
             init.xavier_uniform_(m.weight, gain=np.sqrt(2))
             init.constant_(m.bias, 0)
-            prune.random_unstructured(m, 'weight', amount=Wide_ResNet_sim_correct.sparsity)
+            # prune.random_unstructured(m, 'weight', amount=Wide_ResNet_sim_correct.sparsity)
 
             m.register_forward_hook(_forward_hook)
             m.register_full_backward_pre_hook(_backward_hook)
