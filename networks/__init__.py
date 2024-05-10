@@ -16,4 +16,4 @@ from .wide_resnet_init2 import *
 
 from .wide_resnet_sim import *
 from .wide_resnet_sim_correct import *
-
+from .wide_resnet_sim_correct_l1 import *

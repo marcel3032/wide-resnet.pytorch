@@ -12,7 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 import faiss
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+parameters_to_prune = []
 
 def conv3x3(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=True)
@@ -72,14 +72,14 @@ class Wide_ResNet_sim_correct_l1(nn.Module):
     sparsity = 0
 
     def __init__(self, writer: SummaryWriter, depth, widen_factor, dropout_rate, num_classes, K, k_similar, update_method, bits: int, M: int, sparsity: float):
-        super(Wide_ResNet_sim_correct, self).__init__()
+        super(Wide_ResNet_sim_correct_l1, self).__init__()
         self.global_step = 0
         self.in_planes = 16
         self.conv_to_log = set()
         self.update_method = update_method
         self.bits = bits
         self.M = M
-        Wide_ResNet_sim_correct.sparsity = sparsity
+        Wide_ResNet_sim_correct_l1.sparsity = sparsity
 
         assert ((depth - 4) % 6 == 0), 'Wide-resnet depth should be 6n+4'
         n = (depth - 4) / 6
@@ -96,7 +96,7 @@ class Wide_ResNet_sim_correct_l1(nn.Module):
         self.linear = nn.Linear(nStages[3], num_classes)
         self.K = K
         self.k_similar = k_similar
-
+    
         parameters_to_prune.append((self.linear, 'weight'))
 
         self.apply(self.add_conv_to_parameters_to_prune)
@@ -158,15 +158,21 @@ class Wide_ResNet_sim_correct_l1(nn.Module):
             # import time
             # print(torch.count_nonzero(m.weight)/torch.numel(m.weight), int(time.time()))
             # print(torch.count_nonzero(m.weight_mask)/torch.numel(m.weight_mask), int(time.time()))
-            remove_smallest_weights(m, self.K)
+            K = int(m.weight_mask.count_nonzero() * self.K + 0.99999)
+            # print("\n", m.weight_mask.count_nonzero(), self.K, 0.99999)
+
+            remove_smallest_weights(m, K)
             if self.update_method == 'faiss':
-                weight_magic_faiss(m, self.K, self.k_similar, self.bits, self.M)
+                weight_magic_faiss(m, K, self.k_similar, self.bits, self.M)
             elif self.update_method == 'random':
-                weight_magic_random(m, self.K, self.k_similar)
+                weight_magic_random(m, K, self.k_similar)
             elif self.update_method == 'bruteforce':
-                weight_magic(m, self.K, self.k_similar)
+                weight_magic(m, K, self.k_similar)
             else:
                 raise RuntimeError(f"unknown update method: {self.update_method}")
+
+            # print(m.weight_mask.count_nonzero(), self.K, 0.99999)
+
 
     @staticmethod
     def conv_init(m):
@@ -184,10 +190,11 @@ class Wide_ResNet_sim_correct_l1(nn.Module):
 
 
 def remove_smallest_weights(conv, K):
-    K = int(conv.weight.numel() * K)
+    # K = int(conv.weight_mask.count_nonzero() * K + 0.99999)
     weights = np.abs(conv.weight.detach().cpu().numpy().reshape(-1))
     weights[conv.weight_mask.detach().cpu().numpy().reshape(-1) == 0] = np.inf
     indices = np.unravel_index(np.argpartition(weights, K)[:K], conv.weight.shape)
+    # print("remove", indices[0].shape)
     conv.weight[indices] = 0
     conv.weight_mask[indices] = 0
 
@@ -213,8 +220,9 @@ def weight_magic_faiss(conv, K, k_similar, bits, M):
     delattr(conv, "input")
     delattr(conv, "grad_output")
 
-    # sposob B.
-    K = int(conv.weight.numel() * K)
+    # K = int(conv.weight_mask.count_nonzero() * K + 0.99999)
+    if K==0:
+        return
 
     unfold = F.unfold(x, kernel_size=conv.kernel_size, padding=conv.padding, stride=conv.stride)
     out_size = conv.in_channels * np.prod(conv.kernel_size)
@@ -222,23 +230,17 @@ def weight_magic_faiss(conv, K, k_similar, bits, M):
     unfold = unfold.mean(axis=2).detach().cpu().numpy().T
     out = out.mean(axis=(2, 3)).detach().cpu().numpy().T
 
-    print(conv.weight.shape, unfold.shape, out.shape)
+    # print(conv.weight_mask.count_nonzero(), conv.weight.shape, unfold.shape, out.shape, K, k_similar)
 
-    # unfold /= np.linalg.norm(unfold, axis=1).reshape(-1, 1)
-    # out /= np.linalg.norm(out, axis=1).reshape(-1, 1)
-    # print(len(unfold))
-    # if False: # or len(unfold)>5000:
-    #     quantizer = faiss.IndexFlatIP(batch_size)
-    #     index = faiss.IndexLSH(quantizer, batch_size, int(len(unfold)**0.25))
-    #     index.train(unfold)
-    # else:
-    # index = faiss.IndexLSH(batch_size, int(bits*batch_size))
     index = faiss.IndexLSH(batch_size, int(bits*batch_size))
 
     index.train(unfold)
     index.add(unfold)
 
-    k_similar = int(out_size * k_similar)
+    # k_similar = int(out_size * k_similar)
+    k_similar = int(k_similar*K/out.shape[0])
+
+    # print(k_similar, K, out.shape[0])
 
     to_rand_idx, to_rand = get_distances(index, conv, out, k_similar)
     to_rand = np.abs(to_rand)
@@ -246,6 +248,7 @@ def weight_magic_faiss(conv, K, k_similar, bits, M):
     to_rand_idx = to_rand_idx.T[np.argpartition(to_rand, K)[:K]]
     to_randn = to_rand_idx.T
 
+    # print("add: ", to_randn.shape)
     conv.weight[to_randn] = 0
     conv.weight_mask[to_randn] = 1
 
@@ -255,11 +258,16 @@ def weight_magic_random(conv, K, k_similar):
     delattr(conv, "input")
     delattr(conv, "grad_output")
 
-    K = int(conv.weight.numel() * K)
+    # K = int(conv.weight_mask.count_nonzero() * K + 0.99999)
+    if K==0:
+        return
 
     indices = torch.nonzero(torch.where(conv.weight_mask == 0, 1, 0))
     p = torch.ones(indices.shape[0], device=device)
+    # print(K, conv.weight.count_nonzero(), conv.weight.numel(), )
     to_randn = tuple(indices[p.multinomial(K, False)].T)
+
+    # print("add", to_randn[0].shape)
 
     conv.weight[to_randn] = 0
     conv.weight_mask[to_randn] = 1
@@ -272,7 +280,6 @@ def weight_magic(conv, K, k_similar):
     delattr(conv, "input")
     delattr(conv, "grad_output")
 
-    # sposob C.
     def indices_of_smallest(arr, k, conv):
         if k > 0:
             return np.unravel_index(np.argpartition(arr.reshape(-1), k)[:k], conv.weight.shape)
@@ -284,7 +291,9 @@ def weight_magic(conv, K, k_similar):
         sy = np.sum(Y ** 2, axis=1, keepdims=True)
         return -2 * X.dot(Y.T) + sx + sy.T
 
-    K = int(conv.weight.numel() * K)
+    # K = int(conv.weight_mask.count_nonzero() * K + 0.99999)
+    if K==0:
+        return
 
     unfold = F.unfold(x, kernel_size=conv.kernel_size, padding=conv.padding, stride=conv.stride)
     out_size = conv.in_channels * np.prod(conv.kernel_size)

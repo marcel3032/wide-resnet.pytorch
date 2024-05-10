@@ -108,4 +108,6 @@ data/
 
 # Runs
 runs/
+runs-retrain/
+runs-init/
 old-runs/

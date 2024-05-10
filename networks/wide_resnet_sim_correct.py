@@ -4,7 +4,7 @@ import torch.nn.init as init
 import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.nn.utils import prune
-# import config as cf
+import config as cf
 
 import sys
 import numpy as np
@@ -21,8 +21,7 @@ def conv3x3(in_planes, out_planes, stride=1):
 def _backward_hook(module, grad_output):
     with torch.no_grad():
         if not hasattr(module, "grad_output"):
-            # FIXME
-            module.grad_output = torch.zeros([128] + list(grad_output[0].shape)[1:], device=device)
+            module.grad_output = torch.zeros([cf.batch_size] + list(grad_output[0].shape)[1:], device=device)
         if module.grad_output.shape[0] == grad_output[0].shape[0]:
             module.grad_output = grad_output[0]
 
@@ -30,8 +29,7 @@ def _backward_hook(module, grad_output):
 def _forward_hook(module, input, output):
     with torch.no_grad():
         if not hasattr(module, "input"):
-            # FIXME
-            module.input = torch.zeros([128] + list(input[0].shape)[1:], device=device)
+            module.input = torch.zeros([cf.batch_size] + list(input[0].shape)[1:], device=device)
         if module.input.shape[0] == input[0].shape[0]:
             module.input = input[0]
 
@@ -198,7 +196,7 @@ def weight_magic_faiss(conv, K, k_similar, bits, M):
     unfold = unfold.mean(axis=2).detach().cpu().numpy().T
     out = out.mean(axis=(2, 3)).detach().cpu().numpy().T
 
-    print(conv.weight.shape, unfold.shape, out.shape)
+    # print(conv.weight.shape, unfold.shape, out.shape)
 
     # unfold /= np.linalg.norm(unfold, axis=1).reshape(-1, 1)
     # out /= np.linalg.norm(out, axis=1).reshape(-1, 1)
@@ -209,14 +207,21 @@ def weight_magic_faiss(conv, K, k_similar, bits, M):
     #     index.train(unfold)
     # else:
     # index = faiss.IndexLSH(batch_size, int(bits*batch_size))
-    index = faiss.IndexLSH(batch_size, int(bits*batch_size))
-
+    # index = faiss.IndexLSH(batch_size, int(bits*batch_size))
+    index = faiss.IndexFlatIP(batch_size)
+    
     index.train(unfold)
     index.add(unfold)
 
     k_similar = int(out_size * k_similar)
 
+    # print(out.shape)
+    # print(list(out))
+
     to_rand_idx, to_rand = get_distances(index, conv, out, k_similar)
+    
+    # raise RuntimeError()
+
     to_rand = np.abs(to_rand)
     to_rand[conv.weight_mask[to_rand_idx].detach().cpu().numpy() == 1] = np.inf
     to_rand_idx = to_rand_idx.T[np.argpartition(to_rand, K)[:K]]

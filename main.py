@@ -42,7 +42,7 @@ parser.add_argument('--dt', default=1, type=int, help='how many steps between we
 parser.add_argument('--K', default=2, type=float, help='frac of weight updates')
 parser.add_argument('--k-similar', default=0, type=float, help='frac of similar weight searched')
 parser.add_argument('--bits', default=0, type=float, help='bits per input')
-parser.add_argument('--sparsity', default=0.8, type=float, help='sparsity of Conv layers')
+parser.add_argument('--sparsity', default=0.8, type=float, help='sparsity of layers')
 parser.add_argument('--M', default=0, type=int, help='parameter M of IndexPQ')
 parser.add_argument('--stop_epoch', default=10*cf.num_epochs, type=int, help='last epoch with connection update')
 parser.add_argument('--no_logs', action='store_true', help="mark tensorboard SummaryWriter as '-to-delete'")
