@@ -11,15 +11,6 @@ import numpy as np
 def conv3x3(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=True)
 
-def conv_init(m):
-    classname = m.__class__.__name__
-    if classname.find('Conv') != -1:
-        init.xavier_uniform_(m.weight, gain=np.sqrt(2))
-        init.constant_(m.bias, 0)
-    elif classname.find('BatchNorm') != -1:
-        init.constant_(m.weight, 1)
-        init.constant_(m.bias, 0)
-
 class wide_basic_l1_pruned(nn.Module):
     def __init__(self, in_planes, planes, dropout_rate, stride=1):
         super(wide_basic_l1_pruned, self).__init__()
@@ -35,8 +26,8 @@ class wide_basic_l1_pruned(nn.Module):
                 nn.Conv2d(in_planes, planes, kernel_size=1, stride=stride, bias=True),
             )
         
-        prune.l1_unstructured(self.conv1, 'weight', amount=0.8)
-        prune.l1_unstructured(self.conv2, 'weight', amount=0.8)
+        # prune.l1_unstructured(self.conv1, 'weight', amount=0.8)
+        # prune.l1_unstructured(self.conv2, 'weight', amount=0.8)
 
     def forward(self, x):
         out = self.dropout(self.conv1(F.relu(self.bn1(x))))
@@ -46,9 +37,11 @@ class wide_basic_l1_pruned(nn.Module):
         return out
 
 class Wide_ResNetL1Pruned(nn.Module):
-    def __init__(self, depth, widen_factor, dropout_rate, num_classes):
+    sparsity = -1 
+    def __init__(self, depth, widen_factor, dropout_rate, num_classes, sparsity):
         super(Wide_ResNetL1Pruned, self).__init__()
         self.in_planes = 16
+        Wide_ResNetL1Pruned.sparsity = sparsity
 
         assert ((depth-4)%6 ==0), 'Wide-resnet depth should be 6n+4'
         n = (depth-4)/6
@@ -64,8 +57,11 @@ class Wide_ResNetL1Pruned(nn.Module):
         self.bn1 = nn.BatchNorm2d(nStages[3], momentum=0.9)
         self.linear = nn.Linear(nStages[3], num_classes)
 
-        prune.l1_unstructured(self.conv1, 'weight', amount=0.8)
-        prune.l1_unstructured(self.linear, 'weight', amount=0.8)
+        # prune.l1_unstructured(self.conv1, 'weight', amount=0.8)
+        prune.l1_unstructured(self.linear, 'weight', amount=self.sparsity)
+
+    def log(self, m, writer):
+        pass
 
     def _wide_layer(self, block, planes, num_blocks, dropout_rate, stride):
         strides = [stride] + [1]*(int(num_blocks)-1)
@@ -88,6 +84,21 @@ class Wide_ResNetL1Pruned(nn.Module):
         out = self.linear(out)
 
         return out
+
+    @staticmethod
+    def conv_init(m):
+        classname = m.__class__.__name__
+        if classname.find('Conv') != -1:
+            init.xavier_uniform_(m.weight, gain=np.sqrt(2))
+            init.constant_(m.bias, 0)
+            prune.l1_unstructured(m, 'weight', amount=Wide_ResNetL1Pruned.sparsity)
+        elif classname.find('BatchNorm') != -1:
+            init.constant_(m.weight, 1)
+            init.constant_(m.bias, 0)
+
+    def update_weights(self, w):
+        pass
+
 
 if __name__ == '__main__':
     net=Wide_ResNetL1Pruned(28, 10, 0.3, 10)

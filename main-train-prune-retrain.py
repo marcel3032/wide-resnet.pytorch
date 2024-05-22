@@ -42,8 +42,9 @@ parser.add_argument('--dt', default=1, type=int, help='how many steps between we
 parser.add_argument('--K', default=2, type=float, help='frac of weight updates')
 parser.add_argument('--k-similar', default=0, type=float, help='frac of similar weight searched')
 parser.add_argument('--bits', default=0, type=float, help='bits per input')
-parser.add_argument('--sparsity', default=0.8, type=float, help='sparsity of layers')
+parser.add_argument('--sparsity', default=0.8, type=float, help='sparsity of Conv layers')
 parser.add_argument('--M', default=0, type=int, help='parameter M of IndexPQ')
+parser.add_argument('--S', type=int, help='epoch when we sparsify network')
 parser.add_argument('--stop_epoch', default=10*cf.num_epochs, type=int, help='last epoch with connection update')
 parser.add_argument('--no_logs', action='store_true', help="mark tensorboard SummaryWriter as '-to-delete'")
 parser.add_argument('--connection-update', help='what connection update we are going to use [faiss/bruteforce/random]')
@@ -123,15 +124,15 @@ def getNetwork(args):
         net = Wide_ResNetPruned(args.depth, args.widen_factor, args.dropout, num_classes, args.sparsity)
         file_name = 'wide-resnet-pruned-'+str(args.depth)+'x'+str(args.widen_factor)
     elif (args.net_type == 'wide-resnet-pruned-global'):
-        net = Wide_ResNetPrunedGlobal(args.depth, args.widen_factor, args.dropout, num_classes, args.sparsity)
+        net = Wide_ResNetPrunedGlobal(args.depth, args.widen_factor, args.dropout, num_classes)
         file_name = 'wide-resnet-pruned-global'+str(args.depth)+'x'+str(args.widen_factor)
 
     elif (args.net_type == 'wide-resnet-l1-pruned'):
-        net = Wide_ResNetL1Pruned(args.depth, args.widen_factor, args.dropout, num_classes, args.sparsity)
+        net = Wide_ResNetL1Pruned(args.depth, args.widen_factor, args.dropout, num_classes)
         file_name = 'wide-resnet-l1-pruned-'+str(args.depth)+'x'+str(args.widen_factor)
     elif (args.net_type == 'wide-resnet-l1-pruned-global'):
-        net = Wide_ResNetL1PrunedGlobal(args.depth, args.widen_factor, args.dropout, num_classes, args.sparsity)
-        file_name = 'wide-resnet-l1-pruned-global'+str(args.depth)+'x'+str(args.widen_factor)
+        net = Wide_ResNetL1PrunedGlobalRetrain(args.depth, args.widen_factor, args.dropout, num_classes, args.sparsity)
+        file_name = 'wide-resnet-l1-pruned-global-retrain'+str(args.depth)+'x'+str(args.widen_factor)
 
     elif (args.net_type == 'wide-resnet-init1'):
         net = Wide_ResNet_init1(args.depth, args.widen_factor, args.dropout, num_classes)
@@ -148,10 +149,6 @@ def getNetwork(args):
     elif (args.net_type == 'wide-resnet-sim-correct'):
         net = Wide_ResNet_sim_correct(writer, args.depth, args.widen_factor, args.dropout, num_classes, args.K, args.k_similar, args.connection_update, args.bits, args.M, args.sparsity)
         file_name = 'wide-resnet-sim-correct'+str(args.depth)+'x'+str(args.widen_factor)
-    
-    elif (args.net_type == 'wide-resnet-sim-correct-l1'):
-        net = Wide_ResNet_sim_correct_l1(writer, args.depth, args.widen_factor, args.dropout, num_classes, args.K, args.k_similar, args.connection_update, args.bits, args.M, args.sparsity)
-        file_name = 'wide-resnet-sim-correct-l1'+str(args.depth)+'x'+str(args.widen_factor)
 
     else:
         print('Error : Network should be either [LeNet / VGGNet / ResNet / Wide_ResNet [pruned] / Wide_ResNet L1 [pruned]')
@@ -336,7 +333,24 @@ print('| Initial Learning Rate = ' + str(args.lr))
 print('| Optimizer = ' + str(optim_type))
 
 elapsed_time = 0
-for epoch in range(start_epoch, start_epoch+num_epochs):
+# for epoch in range(start_epoch, start_epoch+num_epochs):
+prune_epoch = args.S
+for epoch in range(start_epoch, start_epoch+prune_epoch):
+    start_time = time.time()
+
+    train(epoch)
+    test(epoch)
+
+    epoch_time = time.time() - start_time
+    elapsed_time += epoch_time
+    print('| Elapsed time : %d:%02d:%02d'  %(cf.get_hms(elapsed_time)))
+
+if args.net_type == 'wide-resnet-l1-pruned-global':
+    print("net pruning")
+    net.module.prune()
+
+# for epoch in range(start_epoch, start_epoch+num_epochs):
+for epoch in range(start_epoch+prune_epoch, start_epoch+prune_epoch+(100-prune_epoch)):
     start_time = time.time()
 
     train(epoch)
@@ -348,3 +362,4 @@ for epoch in range(start_epoch, start_epoch+num_epochs):
 
 print('\n[Phase 4] : Testing model')
 print('* Test results : Acc@1 = %.2f%%' %(best_acc))
+
